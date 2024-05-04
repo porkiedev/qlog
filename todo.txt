@@ -1,0 +1,57 @@
+The source of stress (or fun)
+
+Wanted tabs:
+    1. Contact Logger
+        - Ideally add hamlib support so we can instantly load the mode and frequency from the radio when logging contacts
+    2. Contact Viewer
+        - Should be an efficient table, capable of rendering millions of records
+        - Should be capable of searching/sorting by any field
+        - Should have a button to perform a callsign search
+    3. MUF Map
+    4. DX Cluster
+    5. Solar information
+    6. Hamlib rig control
+    7. Statistics
+    8. Callsign search
+    9. Frequency allocation chart
+        - Contains commonly used frequencies
+        - Contains band allocations for each operator class
+        - Contains power limits and legal requirements for each band
+    10. Mode chart
+        - Contains information about different modes, including digital modes
+        - Contains commonly used frequencies for each mode
+    11. PSKReporter Map
+        - Does PSKReporter have an API?
+
+Wanted features:
+    1. Ability to log contacts to LOTW, QRZ, or just output a CSV file
+        - Should be able to select only certain contacts to export
+    2. Ability to log contacts to a remote (or local) server
+        - Useful so someone could log contacts from entirely different devices
+        - Immediate challenges:
+            1. How do we handle network failures?
+                - Consider maintaining a local cache
+            2. How do we maintain security on the server?
+                - An authenticated server means we can expose it to the internet
+                - Should we rely on surrealdb authentication or write a HTTP API that utilizes API keys?
+        - This is probably an entire project in itself as we would probably require custom software on the server
+
+Project requirements:
+    1. High performance, primarily for table sorting and contact storage
+    2. Non-blocking (in most cases). Sometimes, blocking is useful
+    3. Modularity
+        - Tabs need to be able to communicate to eachother without depending on eachother
+            - Consider using custom channels for this. This way, the intended recipient of an event can receive an event from another tab
+            - Example: If the user found a contact in the contact table, they should be able to click a search button,
+              which should send a message to the callsign search tab, telling it to search for a contact
+
+TODOs:
+    1. Implement automatic database migration
+        - If the user updates their application to a new version with a new database schema,
+          we should detect that when the application is launched and automatically migrate the database to the new version
+        - Warning: How would this work with a remote database?
+          Perhaps we just need to avoid breaking database changes altogether, though that may be unrealistic
+    2. Whether you're adding or modifying a contact, under the MODE field, if 'Other' is selected,
+        we need to create a context menu/textbox to enter the mode name
+    3. Show the contact duration in the contact table
+    4. Optimize the contact table for memory usage by only querying for the visible rows, +/- 50~ rows
