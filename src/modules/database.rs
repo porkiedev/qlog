@@ -11,7 +11,7 @@ use surrealdb::{engine::any::Any, opt::auth::Root, sql::{self, statements}, Surr
 use tokio::runtime::Handle;
 use super::types::{self, Event, SpawnedFuture};
 use thiserror::Error;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 
 const DB_FOLDER: &str = "db";
@@ -51,7 +51,7 @@ impl DatabaseInterface {
     /// 5. For a temporary in-memory database, use `mem://`
     /// 
     /// - Note: For remote endpoints, use `wss` (WebSockets) if possible, and please don't use the insecure variant of WebSockets or HTTP.
-    pub fn new(handle: Handle, endpoint: Option<String>, credentials: Option<(&str, &str)>) -> Result<Self, String> {
+    pub fn new(handle: Handle, endpoint: Option<String>, credentials: Option<(&str, &str)>) -> Result<Self> {
 
         // Format the endpoint as a string. This is either the user-provided endpoint, or the default embedded database
         let endpoint = endpoint.unwrap_or({
@@ -75,27 +75,19 @@ impl DatabaseInterface {
     /// Tries to connect to the database at `endpoint`, optionally using the provided `credentials`
     /// 
     /// If this fails, the returned result contains a string that describes the issue
-    async fn connect_to_db(endpoint: String, credentials: Option<(&str, &str)>) -> Result<Surreal<Any>, String> {
+    async fn connect_to_db(endpoint: String, credentials: Option<(&str, &str)>) -> Result<Surreal<Any>> {
         
         debug!("Connecting to database ('{endpoint}')");
 
         // Connect to the database
-        let db = surrealdb::engine::any::connect(&endpoint)
-        .await
-        .map_err(|err| {
-            error!("Failed to connect to database ('{endpoint}'): {err}");
-            format!("Failed to connect to database: {err}")
-        })?;
+        let db = surrealdb::engine::any::connect(&endpoint).await
+        .map_err(DatabaseError::ConnectionFailure)?;
 
         debug!("Switching namespace to '{DB_NAMESPACE}' and database to '{DB_CONTACTS}'");
 
-        // Use the default namespace and contacts database
-        db.use_ns(DB_NAMESPACE)
-        .use_db(DB_CONTACTS)
-        .await.map_err(|err| {
-            error!("Failed to switch namespace to {DB_NAMESPACE} and database to {DB_CONTACTS}: {err}");
-            format!("Failed to connect to database: {err}")
-        })?;
+        // Use the default namespace and database
+        db.use_ns(DB_NAMESPACE).use_db(DB_CONTACTS).await
+        .map_err(|error| DatabaseError::NamespaceChangeFailure { ns: DB_NAMESPACE.into(), db: DB_CONTACTS.into(), error })?;
 
         info!("Connected to database");
 
@@ -108,12 +100,7 @@ impl DatabaseInterface {
                 password
             })
             .await
-            .map_err(|err| {
-                error!("Failed to authenticate with database: {err}");
-                format!("Failed to authenticate with database\n{err}")
-            })?;
-
-            info!("Authenticated with database");
+            .map_err(DatabaseError::AuthenticationFailure)?;
         };
 
         Ok(db)
@@ -145,14 +132,12 @@ impl DatabaseInterface {
             // Execute the database query with a 1 second timeout
             let response: Option<types::Contact> = execute_query_single(db.query(stmt), Duration::from_secs(1)).await?;
 
-            // Return the same contact that we sent to the db
-            if let Some(contact) = response {
-                info!("Contact with '{}' has been added to the database", contact.callsign);
-                Ok(Event::AddedContact(contact.into()))
-            } else {
-                error!("Failed to add contact with '{}' to the database (the response was empty)", contact.callsign);
-                Err(DatabaseError::EmptyResponse)?
-            }
+            // Get the contact and ensure the database response wasn't empty
+            let contact = response.ok_or(DatabaseError::EmptyResponse)?;
+
+            // Return the added contact event
+            Ok(Event::AddedContact(contact.into()))
+
         })
     }
     
@@ -177,14 +162,12 @@ impl DatabaseInterface {
             // Execute the query
             let response: Option<types::Contact> = execute_query_single(db.query(stmt), Duration::from_secs(1)).await?;
             
-            // Process the query response
-            if let Some(contact) = response {
-                info!("Contact with '{}' has been updated", contact.callsign);
-                Ok(Event::UpdatedContact(contact.into()))
-            } else {
-                error!("Failed to update contact with '{}' (the response was empty", contact.callsign);
-                Err(DatabaseError::EmptyResponse)?
-            }
+            // Get the updated contact and ensure the database response wasn't empty
+            let contact = response.ok_or(DatabaseError::EmptyResponse)?;
+
+            // Return the updated contact event
+            Ok(Event::UpdatedContact(contact.into()))
+            
         })
     }
 
@@ -206,14 +189,12 @@ impl DatabaseInterface {
             // Execute the query
             let response: Option<types::Contact> = execute_query_single(db.query(stmt), Duration::from_secs(1)).await?;
 
-            // Process the query response
-            if let Some(contact) = response {
-                info!("Contact with '{}' has been removed from the database", contact.callsign);
-                Ok(Event::DeletedContact(contact.into()))
-            } else {
-                error!("Failed to remove contact:{id} from the database because it doesn't exist");
-                Err(DatabaseError::DoesNotExist)?
-            }
+            // Get the deleted contact and ensure the database response wasn't empty
+            let contact = response.ok_or(DatabaseError::DoesNotExist)?;
+
+            // Return the deleted contact event
+            Ok(Event::DeletedContact(contact.into()))
+
         })
     }
 
@@ -240,6 +221,7 @@ impl DatabaseInterface {
             // Execute the query
             let response = execute_query(db.query(stmt), Duration::from_secs(1)).await?;
 
+            // Return the deleted contacts event
             Ok(Event::DeletedContacts(response))
         })
     }
@@ -288,8 +270,10 @@ impl DatabaseInterface {
                 ..Default::default()
             };
 
+            // Execute the query
             let response = execute_query(db.query(stmt), Duration::from_secs(1)).await?;
 
+            // Return the got contacts event
             Ok(Event::GotContacts(response))
 
         })
@@ -335,38 +319,14 @@ where
     // Convert the query into a future
     let fut = fut.into_future();
 
-    // Execute the query with the user-provided timeout
-    if let Ok(response) = tokio::time::timeout(timeout, fut).await {
+    // Execute the query with the provided timeout 
+    let mut response = tokio::time::timeout(timeout, fut).await
+        .map_err(|_e| DatabaseError::Timeout)?
+        .map_err(DatabaseError::QueryFailed)?
+        .take::<Vec<T>>(0).map_err(DatabaseError::QueryFailed)?;
 
-        match response {
-            // The DB finished executing the query
-            Ok(mut response) => {
-
-                // Parse the database response
-                match response.take::<Vec<T>>(0) {
-                    // Successfully deserialized data into type `T`
-                    Ok(t) => Ok(t),
-                    // Database failed to execute the query or deserialization failed
-                    Err(err) => {
-                        error!("Database failed to execute query: {err}");
-                        Err(DatabaseError::QueryFailed(err))?
-                    }
-                }
-
-            },
-            // The DB failed to execute the query
-            Err(err) => {
-                error!("Database failed to execute query: {err}");
-                Err(DatabaseError::QueryFailed(err))?
-            }
-        }
-
-    }
-    // The timeout was reached (the database took too long to respond)
-    else {
-        error!("Timed out ({timeout:?}) while waiting for the database to respond");
-        Err(DatabaseError::Timeout)?
-    }
+    // Return the db response
+    Ok(response)
 
 }
 
@@ -385,38 +345,14 @@ where
     // Convert the query into a future
     let fut = fut.into_future();
 
-    // Execute the query with the user-provided timeout
-    if let Ok(response) = tokio::time::timeout(timeout, fut).await {
+    // Execute the query with the provided timeout 
+    let mut response = tokio::time::timeout(timeout, fut).await
+        .map_err(|_e| DatabaseError::Timeout)?
+        .map_err(DatabaseError::QueryFailed)?
+        .take::<Option<T>>(0).map_err(DatabaseError::QueryFailed)?;
 
-        match response {
-            // The DB finished executing the query
-            Ok(mut response) => {
-
-                // Parse the database response
-                match response.take::<Option<T>>(0) {
-                    // Successfully deserialized data into Option<T>
-                    Ok(t) => Ok(t),
-                    // Database failed to execute the query or deserialization failed
-                    Err(err) => {
-                        error!("Database failed to execute query: {err}");
-                        Err(DatabaseError::QueryFailed(err))?
-                    }
-                }
-
-            },
-            // The DB failed to execute the query
-            Err(err) => {
-                error!("Database failed to execute query: {err}");
-                Err(DatabaseError::QueryFailed(err))?
-            }
-        }
-
-    }
-    // The timeout was reached (the database took too long to respond)
-    else {
-        error!("Timed out ({timeout:?}) while waiting for the database to respond");
-        Err(DatabaseError::Timeout)?
-    }
+    // Return the db response
+    Ok(response)
 
 }
 
@@ -491,7 +427,17 @@ impl ContactTableColumn {
 /// Errors regarding the database module
 #[derive(Debug, Error)]
 pub enum DatabaseError {
-    #[error("The database didn't respond")]
+    #[error("Failed to connect to the database: {0}")]
+    ConnectionFailure(surrealdb::Error),
+    #[error("Failed to set namespace to {ns} and db to {db}: {error}")]
+    NamespaceChangeFailure {
+        ns: String,
+        db: String,
+        error: surrealdb::Error
+    },
+    #[error("Failed to authenticate with database: {0}")]
+    AuthenticationFailure(surrealdb::Error),
+    #[error("The database didn't respond in time")]
     NoResponse,
     #[error("The database failed to execute the query: {0}")]
     QueryFailed(surrealdb::Error),

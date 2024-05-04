@@ -1249,7 +1249,7 @@ impl Tab for CallsignLookupTab {
 
             let cl = callsign_lookup::CallsignLookup::new(config.runtime.handle().clone(), None);
             let fut = cl.lookup_callsign(&self.callsign);
-            // config.tasks.push((None, fut));
+            config.tasks.push((None, fut));
 
         }
 

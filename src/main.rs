@@ -117,7 +117,7 @@ impl App for Gui {
                 config.notifications.shrink_to(32);
 
                 // A label to show the latest notification (if one exists)
-                if let Some(notification) = config.notifications.first() {
+                if let Some(notification) = config.notifications.last() {
 
                     // Get the visual of the GUI
                     let visuals = &ui.style().visuals;
@@ -146,6 +146,7 @@ impl App for Gui {
         // because one long-running task will delay all of the other tasks
         while let Some((task_tab_id, task)) = config.tasks.first_mut() {
 
+            // The task is finished
             if task.is_finished() {
                 match config.runtime.block_on(task).unwrap() {
                     Ok(event) => {
@@ -176,6 +177,10 @@ impl App for Gui {
 
                 // Since the task is complete, remove it from the queue
                 config.tasks.remove(0);
+            }
+            // The task is not finished yet so wait to check next frame
+            else {
+                break;
             }
 
         }
