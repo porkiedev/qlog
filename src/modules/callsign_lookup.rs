@@ -4,15 +4,15 @@
 
 use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 
+use anyhow::{Context, Result};
 use chrono::NaiveDate;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tokio::{runtime::Handle, sync::Mutex};
 use geoutils::Location;
 
-use crate::modules::types::RecoverableError;
-
-use super::types::{Event, FutureEvent};
+use super::types::{Event, SpawnedFuture};
 
 
 const PROGRAM_NAME: &str = env!("CARGO_PKG_NAME");
@@ -87,77 +87,53 @@ impl CallsignLookup {
     //     id
     // }
 
-    async fn query_hamdb(callsign: String) -> Option<HamDBResponse> {
+    async fn query_hamdb(callsign: String) -> Result<CallsignInformation> {
         let hamdb_url = format!("https://api.hamdb.org/{callsign}/json/{PROGRAM_NAME}");
 
-        let response = reqwest::get(hamdb_url).await.unwrap()
-        .json::<serde_json::Value>().await.unwrap();
+        let response = reqwest::get(hamdb_url).await.context("Failed to query HamDB API")?
+        .json::<serde_json::Value>().await.context("Failed to query HamDB API")?;
 
-        let value = match response.get("hamdb") {
-            Some(value) => value,
-            None => {
-                error!("Failed to lookup callsign because the HamDB API response was invalid: {response}");
-                return None
-            }
-        };
-        let value = match value.get("callsign") {
-            Some(value) => value,
-            None => {
-                error!("Failed to lookup callsign because the HamDB API response was invalid: {value}");
-                return None
-            }
-        };
+        let value = response.get("hamdb")
+            .ok_or(CallsignLookupError::InvalidResponse)?
+            .get("callsign")
+            .ok_or(CallsignLookupError::InvalidResponse)?;
 
-        match serde_json::from_value::<HamDBResponse>(value.clone()) {
-            Ok(data) => {
-                // The callsign wasn't found
-                if data.callsign == "NOT_FOUND" {
-                    None
-                }
-                // The callsign was found
-                else {
-                    Some(data)
-                }
-            },
-            Err(err) => {
-                error!("Failed to parse HamDB API response into a HamDBResponse type: {err}");
-                None
-            }
+        let data = serde_json::from_value::<HamDBResponse>(value.clone())?;
+
+        if data.callsign == "NOT_FOUND" {
+            Err(CallsignLookupError::CallsignNotFound)?
+        } else {
+            Ok(data.to_callsign_information())
         }
     }
 
-    async fn query_hamqth(callsign: String, session_id: String) -> Option<HamQTHResponse> {
+    async fn query_hamqth(callsign: String, session_id: String) -> Result<CallsignInformation> {
         let url = format!("https://hamqth.com/xml.php?id={session_id}&callsign={callsign}&prg={PROGRAM_NAME}");
 
-        let response = reqwest::get(url).await.unwrap()
-        .text().await.unwrap();
+        let response = reqwest::get(url).await.context("Failed to query HamQTH API")?
+        .text().await.context("Failed to query HamQTH API")?;
+
         debug!("Raw reseponse: {response}");
 
-        match serde_xml_rs::from_str::<HamQTHResponseWrapper>(&response) {
-            Ok(data) => Some(data.inner),
-            Err(err) => {
-                error!("Failed to parse HamQTH API response into a HamQTHResponse type: {err}");
-                None
-            }
-        }
+        Ok(serde_xml_rs::from_str::<HamQTHResponseWrapper>(&response).context("Failed to query HamQTH API")?.inner.to_callsign_information())
     }
 
-    pub fn lookup_callsign(&self, callsign: impl ToString) -> FutureEvent {
+    pub fn lookup_callsign(&self, callsign: impl ToString) -> SpawnedFuture {
         let callsign = callsign.to_string();
 
         // TODO: Should we check to make sure the callsign isn't an invalid URL, or does reqwest do that for us?
         self.handle.spawn(async move {
 
             // Query the HamDB API first
-            if let Some(response) = Self::query_hamdb(callsign).await {
-                debug!("Success: {:?}", response.clone().to_callsign_information());
-                return Ok(Event::CallsignLookedUp(Box::new(response.to_callsign_information())));
-            }
+            let hamdb_callsign_info = Self::query_hamdb(callsign).await?;
+            debug!("Success: {:?}", hamdb_callsign_info);
+            return Ok(Event::CallsignLookedUp(Box::new(hamdb_callsign_info)));
 
             // The HamDB API couldn't resolve the callsign, so query the HamQTH API
             // let hamqth_response = Self::query_hamqth(callsign, session_id).await;
 
-            Err(RecoverableError::CallsignLookupError("Failed to lookup callsign because APi isn't implemented yet".into()))
+            // Err(RecoverableError::CallsignLookupError("Failed to lookup callsign because APi isn't implemented yet".into()))
+            Err(CallsignLookupError::InvalidResponse)?
 
         })
     }
@@ -480,4 +456,15 @@ pub struct CallsignInformation {
 trait ToCallsignInformation {
     /// Converts the response into the `CallsignInformation` type
     fn to_callsign_information(self) -> CallsignInformation;
+}
+
+/// Errors regarding the callsign lookup module
+#[derive(Debug, Error)]
+pub enum CallsignLookupError {
+    #[error("The request failed")]
+    FailedRequest,
+    #[error("The response body was invalid")]
+    InvalidResponse,
+    #[error("Couldn't find the callsign")]
+    CallsignNotFound
 }

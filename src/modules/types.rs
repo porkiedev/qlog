@@ -3,6 +3,7 @@
 //
 
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use chrono::{NaiveDate, NaiveTime};
 use strum_macros::{Display, EnumIter};
@@ -76,21 +77,10 @@ pub enum Mode {
 /// This is useful for displaying general status, warnings, and errors to the user via the GUI.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum Notification {
-    GenericInfo(String),
-    GenericWarning(String),
-    GenericError(String),
-    /// Errors specific to the database module
-    DatabaseError(String),
-    /// Errors specific to the callsign lookup module
-    CallsignLookupError(String)
+    Info(String),
+    Warning(String),
+    Error(String),
 }
-
-/// A non-critical error type. This is really just a normal user-friendly GUI notification,
-/// with a different name to reduce confusion for developers.
-/// 
-/// This should be used by any function that *could* fail, but where failure isn't critical and can be recovered from.
-/// In these situations, we send a [Notification] to the user, informing them of the problem.
-pub type RecoverableError = Notification;
 
 /// An event that is made visible to every tab in the GUI.
 /// 
@@ -112,4 +102,8 @@ pub enum Event {
     CallsignLookedUp(Box<CallsignInformation>)
 }
 
-pub type FutureEvent = JoinHandle<Result<Event, RecoverableError>>;
+/// The result of a task spawned on the tokio runtime.
+/// 
+/// The spawned future should be pushed onto the GUI task queue.
+/// The GUI will check for completed futures serially and send update events out to the corresponding tabs.
+pub type SpawnedFuture = JoinHandle<Result<Event>>;

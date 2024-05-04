@@ -124,11 +124,9 @@ impl App for Gui {
 
                     // Create the text with different colors depending on the notification type
                     let text = match notification {
-                        types::Notification::GenericInfo(t) => RichText::new(t),
-                        types::Notification::GenericWarning(t) => RichText::new(t).color(visuals.warn_fg_color),
-                        types::Notification::GenericError(t) => RichText::new(t).color(visuals.error_fg_color).underline(),
-                        types::Notification::DatabaseError(t) => RichText::new(t).color(visuals.error_fg_color).underline(),
-                        types::Notification::CallsignLookupError(t) => RichText::new(t).color(visuals.error_fg_color).underline()
+                        types::Notification::Info(t) => RichText::new(t),
+                        types::Notification::Warning(t) => RichText::new(t).color(visuals.warn_fg_color),
+                        types::Notification::Error(t) => RichText::new(t).color(visuals.error_fg_color)
                     };
 
                     // Render the text, from right to left
@@ -173,7 +171,7 @@ impl App for Gui {
                         }
 
                     },
-                    Err(err) => config.notifications.push(err)
+                    Err(err) => config.notifications.push(types::Notification::Error(err.to_string()))
                 }
 
                 // Since the task is complete, remove it from the queue
@@ -320,7 +318,7 @@ struct GuiConfig {
     /// Async tasks. If an ID is provided, the event will only be sent to the tab with that ID, otherwise the update is global.
     /// This enforces synchronization between tabs.
     #[serde(skip)]
-    pub tasks: Vec<(Option<Id>, types::FutureEvent)>,
+    pub tasks: Vec<(Option<Id>, types::SpawnedFuture)>,
     /// The selected index of the 'add tab' combobox in the top/menu bar
     #[serde(skip)]
     add_tab_idx: usize

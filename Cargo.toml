@@ -22,10 +22,12 @@ chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 geoutils = "0.5"
 
-# qol macros
+# qol
 strum = "0.26"
 strum_macros = "0.26"
 lazy_static = "1.4"
+anyhow = "1.0"
+thiserror = "1.0"
 
 # web requests and serialization
 serde = { version = "1.0", features = ["derive"] }

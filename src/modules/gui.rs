@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use tokio::sync::{oneshot, watch};
 use crate::GuiConfig;
-use super::{callsign_lookup, database, types::{self, FutureEvent, RecoverableError}};
+use super::{callsign_lookup, database, types::{self, SpawnedFuture}};
 
 
 /// The tab trait. This should be implemented for each tab variant
@@ -166,9 +166,6 @@ impl Tab for WelcomeTab {
 pub struct ContactLoggerTab {
     /// The egui ID
     id: Id,
-    #[serde(skip)]
-    /// The async task queue
-    tasks: Vec<oneshot::Receiver<Result<types::Contact, RecoverableError>>>,
     /// The contact. When possible, widgets will modify the values here directly
     input: types::Contact,
     /// The start date of the contact as a string
@@ -519,7 +516,6 @@ impl Default for ContactLoggerTab {
     fn default() -> Self {
         let mut s = Self {
             id: generate_random_id(),
-            tasks: Default::default(),
             input: Default::default(),
             start_date_str: Default::default(),
             start_time_str: Default::default(),
@@ -1252,7 +1248,8 @@ impl Tab for CallsignLookupTab {
         if ui.button("Test").clicked() {
 
             let cl = callsign_lookup::CallsignLookup::new(config.runtime.handle().clone(), None);
-            cl.lookup_callsign(&self.callsign);
+            let fut = cl.lookup_callsign(&self.callsign);
+            // config.tasks.push((None, fut));
 
         }
 
@@ -1376,7 +1373,7 @@ fn generate_random_id() -> Id {
 /// A convenience function to add an async task to a task queue.
 /// 
 /// If `id` is provided, the task result will be bound to the GUI tab with that ID, and only that tab will receive the resulting value.
-fn add_task_to_queue(queue: &mut Vec<(Option<Id>, FutureEvent)>, task: FutureEvent, id: Option<Id>) {
+fn add_task_to_queue(queue: &mut Vec<(Option<Id>, SpawnedFuture)>, task: SpawnedFuture, id: Option<Id>) {
     queue.push((id, task));
 }
 

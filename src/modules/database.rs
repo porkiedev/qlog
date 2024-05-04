@@ -9,7 +9,9 @@ use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use surrealdb::{engine::any::Any, opt::auth::Root, sql::{self, statements}, Surreal};
 use tokio::runtime::Handle;
-use super::types::{self, Event, RecoverableError, FutureEvent};
+use super::types::{self, Event, SpawnedFuture};
+use thiserror::Error;
+use anyhow::Result;
 
 
 const DB_FOLDER: &str = "db";
@@ -129,7 +131,7 @@ impl DatabaseInterface {
     /// Inserts a contact into the contacts table
     /// 
     /// If the insert was successful, this function returns the contact that was just inserted.
-    pub fn insert_contact(&self, contact: types::Contact) -> FutureEvent {
+    pub fn insert_contact(&self, contact: types::Contact) -> SpawnedFuture {
         let db = self.db.clone();
         self.handle.spawn(async move {
                 
@@ -149,8 +151,7 @@ impl DatabaseInterface {
                 Ok(Event::AddedContact(contact.into()))
             } else {
                 error!("Failed to add contact with '{}' to the database (the response was empty)", contact.callsign);
-                Err(RecoverableError::DatabaseError("Failed to add contact to database
-                The query was successful but the response was empty for unknown reasons".into()))
+                Err(DatabaseError::EmptyResponse)?
             }
         })
     }
@@ -158,7 +159,7 @@ impl DatabaseInterface {
     /// Updates a contact in the contacts table using the ID in the provided contact
     /// 
     /// If the update was successful, this function returns the contact after it was updated
-    pub fn update_contact(&self, contact: types::Contact) -> FutureEvent {
+    pub fn update_contact(&self, contact: types::Contact) -> SpawnedFuture {
         let db = self.db.clone();
         self.handle.spawn(async move {
 
@@ -182,8 +183,7 @@ impl DatabaseInterface {
                 Ok(Event::UpdatedContact(contact.into()))
             } else {
                 error!("Failed to update contact with '{}' (the response was empty", contact.callsign);
-                Err(RecoverableError::DatabaseError("Failed to update contact
-                The query was successful but the response was empty for unknown reasons".into()))
+                Err(DatabaseError::EmptyResponse)?
             }
         })
     }
@@ -191,7 +191,7 @@ impl DatabaseInterface {
     /// Deletes a contact from the contacts table
     /// 
     /// If the removal was successful, this function returns the contact that was just removed.
-    pub fn delete_contact(&self, id: sql::Id) -> FutureEvent {
+    pub fn delete_contact(&self, id: sql::Id) -> SpawnedFuture {
         let db = self.db.clone();
         self.handle.spawn(async move {
 
@@ -212,7 +212,7 @@ impl DatabaseInterface {
                 Ok(Event::DeletedContact(contact.into()))
             } else {
                 error!("Failed to remove contact:{id} from the database because it doesn't exist");
-                Err(RecoverableError::DatabaseError("Failed to remove contact from the database because it doesn't exist".into()))
+                Err(DatabaseError::DoesNotExist)?
             }
         })
     }
@@ -220,7 +220,7 @@ impl DatabaseInterface {
     /// Deletes multiple contacts from the contacts table
     /// 
     /// If the removal was successful, this function returns the contacts that were just removed.
-    pub fn delete_contacts(&self, ids: Vec<sql::Id>) -> FutureEvent {
+    pub fn delete_contacts(&self, ids: Vec<sql::Id>) -> SpawnedFuture {
         let db = self.db.clone();
         self.handle.spawn(async move {
 
@@ -249,7 +249,7 @@ impl DatabaseInterface {
     /// 1. `start_at` is the row that the database should start its query at. In most cases, this should be 0.
     /// 2. `sort_col` can be used to order the rows based on a specific column.
     /// 3. `sort_dir` can be used to change which direction the column should be ordered in.
-    pub fn get_contacts(&self, start_at: usize, sort_col: Option<ContactTableColumn>, sort_dir: Option<ColumnSortDirection>) -> FutureEvent {
+    pub fn get_contacts(&self, start_at: usize, sort_col: Option<ContactTableColumn>, sort_dir: Option<ColumnSortDirection>) -> SpawnedFuture {
         let db = self.db.clone();
         self.handle.spawn(async move {
             
@@ -328,7 +328,7 @@ lazy_static! {
 async fn execute_query<T>(
     fut: impl IntoFuture<Output = surrealdb::Result<surrealdb::Response>>,
     timeout: Duration
-) -> Result<Vec<T>, RecoverableError>
+) -> Result<Vec<T>>
 where
     T: for<'a> Deserialize<'a>
 {
@@ -349,7 +349,7 @@ where
                     // Database failed to execute the query or deserialization failed
                     Err(err) => {
                         error!("Database failed to execute query: {err}");
-                        Err(RecoverableError::DatabaseError(format!("Database failed to execute query\n{err}")))
+                        Err(DatabaseError::QueryFailed(err))?
                     }
                 }
 
@@ -357,7 +357,7 @@ where
             // The DB failed to execute the query
             Err(err) => {
                 error!("Database failed to execute query: {err}");
-                Err(RecoverableError::DatabaseError(format!("Database failed to execute query\n{err}")))
+                Err(DatabaseError::QueryFailed(err))?
             }
         }
 
@@ -365,7 +365,7 @@ where
     // The timeout was reached (the database took too long to respond)
     else {
         error!("Timed out ({timeout:?}) while waiting for the database to respond");
-        Err(RecoverableError::DatabaseError("Timed out while waiting for the database to respond".to_string()))
+        Err(DatabaseError::Timeout)?
     }
 
 }
@@ -378,7 +378,7 @@ where
 async fn execute_query_single<T>(
     fut: impl IntoFuture<Output = surrealdb::Result<surrealdb::Response>>,
     timeout: Duration
-) -> Result<Option<T>, RecoverableError>
+) -> Result<Option<T>>
 where
     T: for<'a> Deserialize<'a>
 {
@@ -399,7 +399,7 @@ where
                     // Database failed to execute the query or deserialization failed
                     Err(err) => {
                         error!("Database failed to execute query: {err}");
-                        Err(RecoverableError::DatabaseError(format!("Database failed to execute query\n{err}")))
+                        Err(DatabaseError::QueryFailed(err))?
                     }
                 }
 
@@ -407,7 +407,7 @@ where
             // The DB failed to execute the query
             Err(err) => {
                 error!("Database failed to execute query: {err}");
-                Err(RecoverableError::DatabaseError(format!("Database failed to execute query\n{err}")))
+                Err(DatabaseError::QueryFailed(err))?
             }
         }
 
@@ -415,7 +415,7 @@ where
     // The timeout was reached (the database took too long to respond)
     else {
         error!("Timed out ({timeout:?}) while waiting for the database to respond");
-        Err(RecoverableError::DatabaseError("Timed out while waiting for the database to respond".to_string()))
+        Err(DatabaseError::Timeout)?
     }
 
 }
@@ -487,3 +487,19 @@ impl ContactTableColumn {
         }
     }
 }
+
+/// Errors regarding the database module
+#[derive(Debug, Error)]
+pub enum DatabaseError {
+    #[error("The database didn't respond")]
+    NoResponse,
+    #[error("The database failed to execute the query: {0}")]
+    QueryFailed(surrealdb::Error),
+    #[error("The query was aborted because the database took too long to respond")]
+    Timeout,
+    #[error("The query executed successfully but the response was empty for unknown reasons")]
+    EmptyResponse,
+    #[error("Contact doesn't exist")]
+    DoesNotExist
+}
+
