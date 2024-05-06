@@ -32,7 +32,7 @@ pub struct CallsignLookup {
     /// Optional HamQTH credentials `(username, password)`
     credentials: Option<(String, String)>,
     /// Optional HamQTH session ID
-    hamqth_id: Arc<Mutex<Option<(u64, String)>>>
+    hamqth_id: Arc<Mutex<(u64, String)>>
 }
 impl CallsignLookup {
     /// Create a new CallsignLookup instance.
@@ -47,59 +47,68 @@ impl CallsignLookup {
         }
     }
 
-    async fn refresh_hamqth_session_id() -> String {
-        String::new()
+    async fn refresh_hamqth_session_id(username: String, password: String) -> Result<String> {
+        let url = format!("https://hamqth.com/xml.php?u={username}&p={password}");
+
+        let response = reqwest::get(url).await.map_err(CallsignLookupError::FailedRequest)?
+        .text().await.map_err(CallsignLookupError::FailedRequest)?;
+
+        debug!("Raw reseponse: {response}");
+
+        let id = serde_xml_rs::from_str::<HamQTHAuthResponseWrapper>(&response).map_err(|_err| CallsignLookupError::HamQTHAuthFailure)?.inner.session_id;
+        if id.is_empty() {
+            return Err(CallsignLookupError::HamQTHAuthFailure)?;
+        }
+
+        Ok(id)
     }
 
-    // /// Gets the hamqth session id if credentials were provided.
-    // /// 
-    // /// This will reuse the cached id for 45 minutes, and then it get a new id
-    // fn get_hamqth_session_id(&mut self) -> String {
+    /// Gets the hamqth session id if credentials were provided.
+    /// 
+    /// This will reuse the cached id for 45 minutes, and then it get a new id
+    async fn get_hamqth_session_id(credentials: Option<(String, String)>, hamqth_id: Arc<Mutex<(u64, String)>>) -> Result<String> {
         
-    //     // Ensure we have credentials
-    //     let (username, password) = match &self.credentials {
-    //         Some(c) => c,
-    //         None => return
-    //     };
+        // Ensure we have credentials
+        let (username, password) = credentials.ok_or(CallsignLookupError::CallsignNotFound)?;
 
-    //     // The session ID
-    //     let id;
+        // The session ID
+        let id;
 
-    //     // Found a cached ID
-    //     if let Some((epoch_id, cached_id)) = &self.hamqth_id {
+        // Get the current epoch
+        let epoch_now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
-    //         // Get the current epoch
-    //         let epoch_now = SystemTime::now().elapsed().unwrap().as_secs();
+        // Get the cached id and its creation date
+        let (epoch_old, cached_id) = &mut *hamqth_id.lock().await;
 
-    //         // The cached ID is older than 45 minutes, renew the session id
-    //         if epoch_now - epoch_id > 2700 {
-    //             id = self.handle.block_on(Self::refresh_hamqth_session_id());
-    //         }
-    //         // The cached ID is still valid, so use that
-    //         else {
-    //             id = cached_id.to_string();
-    //         }
-    //     }
-    //     // Couldn't find a cached ID, so get a new one
-    //     else {
-    //         id = self.handle.block_on(Self::refresh_hamqth_session_id());
-    //     }
+        // The cached ID is older than 45 minutes, renew the session id
+        if epoch_now - *epoch_old > 2700 {
+            debug!("Cached ID has expired");
+            id = Self::refresh_hamqth_session_id(username, password).await?;
 
-    //     id
-    // }
+            // Update the ID
+            epoch_old.clone_from(&epoch_now);
+            cached_id.clone_from(&id);
+        }
+        // The cached ID is still valid, so use that
+        else {
+            id = cached_id.to_string();
+        }
+
+        Ok(id)
+    }
 
     async fn query_hamdb(callsign: String) -> Result<CallsignInformation> {
         let hamdb_url = format!("https://api.hamdb.org/{callsign}/json/{PROGRAM_NAME}");
 
-        let response = reqwest::get(hamdb_url).await.context("Failed to query HamDB API")?
-        .json::<serde_json::Value>().await.context("Failed to query HamDB API")?;
+        let response = reqwest::get(hamdb_url).await.map_err(CallsignLookupError::FailedRequest)?
+        .json::<serde_json::Value>().await.map_err(CallsignLookupError::FailedRequest)?;
 
         let value = response.get("hamdb")
-            .ok_or(CallsignLookupError::InvalidResponse)?
+            .ok_or(CallsignLookupError::InvalidResponseBody)?
             .get("callsign")
-            .ok_or(CallsignLookupError::InvalidResponse)?;
+            .ok_or(CallsignLookupError::InvalidResponseBody)?;
 
-        let data = serde_json::from_value::<HamDBResponse>(value.clone())?;
+        let data = serde_json::from_value::<HamDBResponse>(value.clone()).context("Failed to query HamDB API")?;
 
         if data.callsign == "NOT_FOUND" {
             Err(CallsignLookupError::CallsignNotFound)?
@@ -111,34 +120,38 @@ impl CallsignLookup {
     async fn query_hamqth(callsign: String, session_id: String) -> Result<CallsignInformation> {
         let url = format!("https://hamqth.com/xml.php?id={session_id}&callsign={callsign}&prg={PROGRAM_NAME}");
 
-        let response = reqwest::get(url).await.context("Failed to query HamQTH API")?
-        .text().await.context("Failed to query HamQTH API")?;
-
-        debug!("Raw reseponse: {response}");
+        let response = reqwest::get(url).await.map_err(CallsignLookupError::FailedRequest)?
+        .text().await.map_err(CallsignLookupError::FailedRequest)?;
 
         Ok(serde_xml_rs::from_str::<HamQTHResponseWrapper>(&response).context("Failed to query HamQTH API")?.inner.to_callsign_information())
     }
 
-    pub fn lookup_callsign(&self, callsign: impl ToString) -> SpawnedFuture {
+    pub fn lookup_callsign(&mut self, callsign: impl ToString) -> SpawnedFuture {
         let callsign = callsign.to_string();
+        let credentials = self.credentials.clone();
+        let hamqth_id = self.hamqth_id.clone();
 
-        // TODO: Should we check to make sure the callsign isn't an invalid URL, or does reqwest do that for us?
         self.handle.spawn(async move {
 
             // Query the HamDB API first
-            let hamdb_callsign_info = Self::query_hamdb(callsign).await?;
-            debug!("Success: {:?}", hamdb_callsign_info);
-            return Ok(Event::CallsignLookedUp(Box::new(hamdb_callsign_info)));
+            let hamdb_query = Self::query_hamdb(callsign.clone()).await;
 
-            // The HamDB API couldn't resolve the callsign, so query the HamQTH API
-            // let hamqth_response = Self::query_hamqth(callsign, session_id).await;
+            // If HamDB gave the response we wanted, return it, otherwise try again with HamQTH
+            if let Ok(callsign_info) = hamdb_query {
+                return Ok(Event::CallsignLookedUp(Box::new(callsign_info)));
+            }
 
-            Err(CallsignLookupError::CallsignNotFound)?
+            debug!("HamDB query failed, retrying with HamQTH");
+
+            // Get the session HamQTH ID and then query the API with that ID
+            let session_id = Self::get_hamqth_session_id(credentials, hamqth_id).await?;
+            Ok(Event::CallsignLookedUp(Box::new(Self::query_hamqth(callsign, session_id).await?)))
 
         })
     }
 }
 
+/// The HamDB API response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HamDBResponse {
     #[serde(alias = "call")]
@@ -212,6 +225,7 @@ impl ToCallsignInformation for HamDBResponse {
 
         // Format the operator class
         let class = match self.class.as_str() {
+            "" => "Unknown",
             "N" => "Novice",
             "T" => "Technician",
             "G" => "General",
@@ -227,6 +241,10 @@ impl ToCallsignInformation for HamDBResponse {
             // Format the date into `YYYY-MM-DD`
             if let Ok(date) = NaiveDate::parse_from_str(&self.expires, "%m/%d/%Y") {
                 date_str = date.format("%Y-%m-%d").to_string();
+            }
+            // The expiration date is empty, so say "Unknown"
+            else if self.expires.is_empty() {
+                date_str = "Unknown".to_string();
             }
             // Couldn't format the date, so we assume it's already in the right format
             else {
@@ -251,12 +269,14 @@ impl ToCallsignInformation for HamDBResponse {
 }
 
 
+/// A wrapper for the HamQTH API response
 #[derive(Debug, Serialize, Deserialize)]
 struct HamQTHResponseWrapper {
     #[serde(alias = "search")]
     inner: HamQTHResponse
 }
 
+/// The HamQTH API response
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct HamQTHResponse {
@@ -428,7 +448,20 @@ impl ToCallsignInformation for HamQTHResponse {
 }
 
 
-// TODO: Add optional email field
+/// A wrapper for the HamQTH Auth API response
+#[derive(Debug, Serialize, Deserialize)]
+struct HamQTHAuthResponseWrapper {
+    #[serde(alias = "session")]
+    inner: HamQTHAuthResponse
+}
+/// The HamQTH Auth API response
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct HamQTHAuthResponse {
+    session_id: String
+}
+
+
 /// Information about a callsign
 #[derive(Debug, Clone)]
 pub struct CallsignInformation {
@@ -461,10 +494,12 @@ trait ToCallsignInformation {
 /// Errors regarding the callsign lookup module
 #[derive(Debug, Error)]
 pub enum CallsignLookupError {
-    #[error("The request failed")]
-    FailedRequest,
-    #[error("The response body was invalid")]
-    InvalidResponse,
-    #[error("Couldn't find the callsign")]
-    CallsignNotFound
+    #[error("Callsign Lookup: The request failed: {0}")]
+    FailedRequest(reqwest::Error),
+    #[error("Callsign Lookup: The response body was invalid")]
+    InvalidResponseBody,
+    #[error("Callsign Lookup: Couldn't find the callsign")]
+    CallsignNotFound,
+    #[error("Callsign Lookup: Failed to renew HamQTH session ID, is your username and password correct?")]
+    HamQTHAuthFailure
 }
