@@ -25,6 +25,7 @@ const PROGRAM_NAME: &str = env!("CARGO_PKG_NAME");
 /// 2. https://hamqth.com/ (requires username and password to get a session token, but has better support for some callsigns)
 /// 
 /// If credentials for *hamqth* are provided, it will be used in favor of *hamdb*.
+#[derive(Debug)]
 pub struct CallsignLookup {
     /// A handle to the async runtime
     handle: Handle,
@@ -132,8 +133,7 @@ impl CallsignLookup {
             // The HamDB API couldn't resolve the callsign, so query the HamQTH API
             // let hamqth_response = Self::query_hamqth(callsign, session_id).await;
 
-            // Err(RecoverableError::CallsignLookupError("Failed to lookup callsign because APi isn't implemented yet".into()))
-            Err(CallsignLookupError::InvalidResponse)?
+            Err(CallsignLookupError::CallsignNotFound)?
 
         })
     }
@@ -430,26 +430,26 @@ impl ToCallsignInformation for HamQTHResponse {
 
 // TODO: Add optional email field
 /// Information about a callsign
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CallsignInformation {
     /// The callsign of the operator
-    callsign: String,
+    pub callsign: String,
     /// The name of the operator
-    name: String,
+    pub name: String,
     /// The grid square locator of the station
-    grid: String,
+    pub grid: String,
     /// The location (latitude and longitude) of the station
-    location: Location,
+    pub location: Location,
     /// The country of the operator
-    country: String,
+    pub country: String,
     /// The street address of the operator
-    address: String,
+    pub address: String,
     /// The city and state of the operator
-    city_state: String,
+    pub city_state: String,
     /// The license class of the operator
-    class: String,
+    pub class: String,
     /// The expiration date of the operator's license
-    expires: String,
+    pub expires: String,
 }
 
 /// A trait to convert a HamQTH or HamDB response into the `CallsignInformation` type
