@@ -1296,7 +1296,7 @@ impl Tab for CallsignLookupTab {
             // Show a button to search for the callsign
             if ui.button("\u{1F50D}").clicked() {
                 let fut = config.cl_api.lookup_callsign(&self.callsign);
-                config.tasks.push((None, fut));
+                config.tasks.push((Some(self.id), fut));
             }
 
             // Show a textedit box for the callsign
