@@ -1189,6 +1189,17 @@ impl Tab for ContactTableTab {
                 // A right-click context menu
                 response.context_menu(|ui| {
 
+                    // A button to lookup the callsign
+                    if ui.button("Lookup callsign").clicked() {
+                        
+                        // Lookup the contact
+                        config.tasks.push((None, config.cl_api.lookup_callsign(&contact.callsign)));
+
+                        // Close the menu after the button was clicked
+                        ui.close_menu();
+
+                    }
+
                     // A button to delete the contact
                     if ui.button("Delete contact").clicked() {
 
@@ -1228,7 +1239,9 @@ impl Default for ContactTableTab {
 #[serde(default)]
 pub struct CallsignLookupTab {
     id: Id,
-    callsign: String
+    callsign: String,
+    #[serde(skip)]
+    callsign_info: Option<callsign_lookup::CallsignInformation>
 }
 impl Tab for CallsignLookupTab {
     fn id(&self) -> Id {
@@ -1239,19 +1252,60 @@ impl Tab for CallsignLookupTab {
         "Callsign Lookup".into()
     }
 
-    fn ui(&mut self, config: &mut GuiConfig, ui: &mut Ui) {
-        ui.label("ello, lookup a callsign here! :)");
-
-        ui.label("Callsign");
-        ui.text_edit_singleline(&mut self.callsign);
-
-        if ui.button("Test").clicked() {
-
-            let cl = callsign_lookup::CallsignLookup::new(config.runtime.handle().clone(), None);
-            let fut = cl.lookup_callsign(&self.callsign);
-            config.tasks.push((None, fut));
-
+    fn process_event(&mut self, config: &mut GuiConfig, event: &types::Event) {
+        if let types::Event::CallsignLookedUp(callsign_info) = event {
+            self.callsign_info = Some(*callsign_info.clone());
         }
+    }
+
+    fn ui(&mut self, config: &mut GuiConfig, ui: &mut Ui) {
+
+        // A callsign was searched
+        if let Some(info) = &self.callsign_info {
+
+            // Vertically center the callsign label
+            ui.vertical_centered(|ui| {
+
+                // Show the callsign label
+                ui.strong(&info.callsign);
+
+                // Add a horizontal separator
+                ui.separator();
+
+                // Show the labels for each value
+                widgets::Label::new(format!("Name:   {}", info.name)).ui(ui);
+                widgets::Label::new(format!("Grid:   {}", info.grid)).ui(ui);
+                widgets::Label::new(format!("Country:   {}", info.country)).ui(ui);
+                widgets::Label::new(format!("City/State:   {}", info.city_state)).ui(ui);
+                widgets::Label::new(format!("Address:   {}", info.address)).ui(ui);
+                widgets::Label::new(format!("License Class:   {}", info.class)).ui(ui);
+                widgets::Label::new(format!("License Expires:   {}", info.expires)).ui(ui);
+
+            });
+        }
+        // No callsign has been searched yet
+        else {
+            ui.vertical_centered(|ui| {
+                ui.label("Search for a callsign");
+            });
+        }
+
+        // The callsign textbox and search button
+        ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+
+            // Show a button to search for the callsign
+            if ui.button("\u{1F50D}").clicked() {
+                let fut = config.cl_api.lookup_callsign(&self.callsign);
+                config.tasks.push((None, fut));
+            }
+
+            // Show a textedit box for the callsign
+            widgets::TextEdit::singleline(&mut self.callsign)
+            .hint_text("Callsign")
+            .desired_width(f32::INFINITY)
+            .ui(ui);
+
+        });
 
     }
 }
@@ -1259,7 +1313,8 @@ impl Default for CallsignLookupTab {
     fn default() -> Self {
         Self {
             id: generate_random_id(),
-            callsign: Default::default()
+            callsign: Default::default(),
+            callsign_info: Default::default()
         }
     }
 }

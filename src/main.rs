@@ -8,7 +8,7 @@ use egui::{Id, RichText, Ui, WidgetText};
 use egui_dock::{DockArea, DockState, TabViewer};
 use log::{debug, error, info, trace};
 use serde::{Deserialize, Serialize};
-use modules::{database, gui::TabVariant, types};
+use modules::{callsign_lookup, database, gui::TabVariant, types};
 use tokio::runtime::Runtime;
 use modules::gui::Tab;
 
@@ -317,6 +317,9 @@ struct GuiConfig {
     /// A database connection
     #[serde(skip)]
     db: Arc<database::DatabaseInterface>,
+    /// The callsign lookup API
+    #[serde(skip)]
+    cl_api: callsign_lookup::CallsignLookup,
     /// Notifications. This could be status, warning, or error messages that need to be shown at the root level of the GUI
     #[serde(skip)]
     notifications: Vec<types::Notification>,
@@ -334,10 +337,12 @@ impl Default for GuiConfig {
         let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build tokio runtime");
         // let db = database::DatabaseInterface::new(runtime.handle().clone(), None, None).unwrap();
         let db = database::DatabaseInterface::new(runtime.handle().clone(), Some("ws://127.0.0.1:8000".into()), None).unwrap();
+        let cl_api = callsign_lookup::CallsignLookup::new(runtime.handle().clone(), None);
 
         Self {
             runtime,
             db: Arc::new(db),
+            cl_api,
             notifications: Default::default(),
             tasks: Default::default(),
             add_tab_idx: Default::default()
