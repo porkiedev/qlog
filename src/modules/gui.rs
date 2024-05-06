@@ -504,7 +504,7 @@ impl Tab for ContactLoggerTab {
                 self.input.duration = elapsed as u64;
 
                 // Insert the contact into the database
-                config.tasks.push((None, config.db.insert_contact(self.input.clone())));
+                config.tasks.push((None, config.db_api.insert_contact(self.input.clone())));
                 debug!("contact insert task has been added to queue ({})", config.tasks.len());
 
             };
@@ -577,7 +577,7 @@ impl Tab for ContactTableTab {
         // Load contacts from the database
         add_task_to_queue(
             &mut config.tasks,
-            config.db.get_contacts(0, self.sort_column, Some(self.sort_dir)),
+            config.db_api.get_contacts(0, self.sort_column, Some(self.sort_dir)),
             Some(self.id)
         );
     }
@@ -589,7 +589,7 @@ impl Tab for ContactTableTab {
             types::Event::AddedContact(_contact) => {
                 add_task_to_queue(
                     &mut config.tasks,
-                    config.db.get_contacts(0, self.sort_column, Some(self.sort_dir)),
+                    config.db_api.get_contacts(0, self.sort_column, Some(self.sort_dir)),
                     Some(self.id)
                 );
             },
@@ -600,7 +600,7 @@ impl Tab for ContactTableTab {
             types::Event::UpdatedContact(_contact) => {
                 add_task_to_queue(
                     &mut config.tasks,
-                    config.db.get_contacts(0, self.sort_column, Some(self.sort_dir)),
+                    config.db_api.get_contacts(0, self.sort_column, Some(self.sort_dir)),
                     Some(self.id)
                 );
             }
@@ -689,7 +689,7 @@ impl Tab for ContactTableTab {
                     // Update the table now that our sort state changed
                     add_task_to_queue(
                         &mut config.tasks,
-                        config.db.get_contacts(0, self.sort_column, Some(self.sort_dir)),
+                        config.db_api.get_contacts(0, self.sort_column, Some(self.sort_dir)),
                         Some(self.id)
                     );
 
@@ -729,7 +729,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            config.tasks.push((None, config.db.update_contact(contact.clone())));
+                            config.tasks.push((None, config.db_api.update_contact(contact.clone())));
                         };
 
                         // Focuses the textedit when a column is being edited
@@ -771,7 +771,7 @@ impl Tab for ContactTableTab {
                             // Update the contact
                             add_task_to_queue(
                                 &mut config.tasks,
-                                config.db.update_contact(contact.clone()),
+                                config.db_api.update_contact(contact.clone()),
                                 None
                             );
                         };
@@ -834,7 +834,7 @@ impl Tab for ContactTableTab {
                                     // Update the contact
                                     add_task_to_queue(
                                         &mut config.tasks,
-                                        config.db.update_contact(contact.clone()),
+                                        config.db_api.update_contact(contact.clone()),
                                         None
                                     );
                                 };
@@ -850,7 +850,7 @@ impl Tab for ContactTableTab {
                             // Update the contact
                             add_task_to_queue(
                                 &mut config.tasks,
-                                config.db.update_contact(contact.clone()),
+                                config.db_api.update_contact(contact.clone()),
                                 None
                             );
                         };
@@ -889,7 +889,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            config.tasks.push((None, config.db.update_contact(contact.clone())));
+                            config.tasks.push((None, config.db_api.update_contact(contact.clone())));
                         };
 
                         // Focuses the textedit when a column is being edited
@@ -932,7 +932,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            config.tasks.push((None, config.db.update_contact(contact.clone())));
+                            config.tasks.push((None, config.db_api.update_contact(contact.clone())));
                         };
 
                         // Focuses the textedit when a column is being edited
@@ -975,7 +975,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            config.tasks.push((None, config.db.update_contact(contact.clone())));
+                            config.tasks.push((None, config.db_api.update_contact(contact.clone())));
                         };
 
                         // Focuses the dragvalue when the column is being edited
@@ -1018,7 +1018,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            config.tasks.push((None, config.db.update_contact(contact.clone())));
+                            config.tasks.push((None, config.db_api.update_contact(contact.clone())));
                         };
 
                         // Focuses the dragvalue when the column is being edited
@@ -1060,7 +1060,7 @@ impl Tab for ContactTableTab {
                                 contact.date = d;
 
                                 // Update the contact
-                                config.tasks.push((None, config.db.update_contact(contact.clone())));
+                                config.tasks.push((None, config.db_api.update_contact(contact.clone())));
                             }
 
                             // Stop editing the column
@@ -1109,7 +1109,7 @@ impl Tab for ContactTableTab {
                                 contact.time = t;
 
                                 // Update the contact
-                                config.tasks.push((None, config.db.update_contact(contact.clone())));
+                                config.tasks.push((None, config.db_api.update_contact(contact.clone())));
                             }
 
                             // Stop editing the column
@@ -1159,7 +1159,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            config.tasks.push((None, config.db.update_contact(contact.clone())));
+                            config.tasks.push((None, config.db_api.update_contact(contact.clone())));
                         };
 
                         // Focuses the textedit when a column is being edited
@@ -1204,7 +1204,7 @@ impl Tab for ContactTableTab {
                     if ui.button("Delete contact").clicked() {
 
                         // Delete the contact
-                        config.tasks.push((None, config.db.delete_contact(contact.id.as_ref().unwrap().id.clone())));
+                        config.tasks.push((None, config.db_api.delete_contact(contact.id.as_ref().unwrap().id.clone())));
 
                         // Close the menu after the button was clicked
                         ui.close_menu();

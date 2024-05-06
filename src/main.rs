@@ -314,9 +314,9 @@ struct GuiConfig {
     /// The tokio async runtime
     #[serde(skip)]
     runtime: Runtime,
-    /// A database connection
+    /// The database API
     #[serde(skip)]
-    db: Arc<database::DatabaseInterface>,
+    db_api: Arc<database::DatabaseInterface>,
     /// The callsign lookup API
     #[serde(skip)]
     cl_api: callsign_lookup::CallsignLookup,
@@ -341,7 +341,7 @@ impl Default for GuiConfig {
 
         Self {
             runtime,
-            db: Arc::new(db),
+            db_api: Arc::new(db),
             cl_api,
             notifications: Default::default(),
             tasks: Default::default(),
