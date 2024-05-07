@@ -504,8 +504,11 @@ impl Tab for ContactLoggerTab {
                 self.input.duration = elapsed as u64;
 
                 // Insert the contact into the database
-                config.tasks.push((None, config.db_api.insert_contact(self.input.clone())));
-                debug!("contact insert task has been added to queue ({})", config.tasks.len());
+                add_task_to_queue(
+                    &mut config.tasks,
+                    config.db_api.insert_contact(self.input.clone()),
+                    None
+                );
 
             };
         });
@@ -570,7 +573,7 @@ impl Tab for ContactTableTab {
         [true, false]
     }
 
-    // Create a 1s timer that's used to query the db and update the table
+    // Load contacts from database on initialization
     fn init(&mut self, config: &mut GuiConfig) {
         trace!("[ContactTableTab] Initializing table");
 
@@ -729,7 +732,11 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            config.tasks.push((None, config.db_api.update_contact(contact.clone())));
+                            add_task_to_queue(
+                                &mut config.tasks,
+                                config.db_api.update_contact(contact.clone()),
+                                None
+                            );
                         };
 
                         // Focuses the textedit when a column is being edited
@@ -889,7 +896,11 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            config.tasks.push((None, config.db_api.update_contact(contact.clone())));
+                            add_task_to_queue(
+                                &mut config.tasks,
+                                config.db_api.update_contact(contact.clone()),
+                                None
+                            );
                         };
 
                         // Focuses the textedit when a column is being edited
@@ -932,7 +943,11 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            config.tasks.push((None, config.db_api.update_contact(contact.clone())));
+                            add_task_to_queue(
+                                &mut config.tasks,
+                                config.db_api.update_contact(contact.clone()),
+                                None
+                            );
                         };
 
                         // Focuses the textedit when a column is being edited
@@ -975,7 +990,11 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            config.tasks.push((None, config.db_api.update_contact(contact.clone())));
+                            add_task_to_queue(
+                                &mut config.tasks,
+                                config.db_api.update_contact(contact.clone()),
+                                None
+                            );
                         };
 
                         // Focuses the dragvalue when the column is being edited
@@ -1018,7 +1037,11 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            config.tasks.push((None, config.db_api.update_contact(contact.clone())));
+                            add_task_to_queue(
+                                &mut config.tasks,
+                                config.db_api.update_contact(contact.clone()),
+                                None
+                            );
                         };
 
                         // Focuses the dragvalue when the column is being edited
@@ -1060,7 +1083,11 @@ impl Tab for ContactTableTab {
                                 contact.date = d;
 
                                 // Update the contact
-                                config.tasks.push((None, config.db_api.update_contact(contact.clone())));
+                                add_task_to_queue(
+                                    &mut config.tasks,
+                                    config.db_api.update_contact(contact.clone()),
+                                    None
+                                );
                             }
 
                             // Stop editing the column
@@ -1109,7 +1136,11 @@ impl Tab for ContactTableTab {
                                 contact.time = t;
 
                                 // Update the contact
-                                config.tasks.push((None, config.db_api.update_contact(contact.clone())));
+                                add_task_to_queue(
+                                    &mut config.tasks,
+                                    config.db_api.update_contact(contact.clone()),
+                                    None
+                                );
                             }
 
                             // Stop editing the column
@@ -1159,7 +1190,11 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            config.tasks.push((None, config.db_api.update_contact(contact.clone())));
+                            add_task_to_queue(
+                                &mut config.tasks,
+                                config.db_api.update_contact(contact.clone()),
+                                None
+                            );
                         };
 
                         // Focuses the textedit when a column is being edited
@@ -1193,7 +1228,11 @@ impl Tab for ContactTableTab {
                     if ui.button("Lookup callsign").on_hover_text("You must have a callsign lookup tab open to see the result").clicked() {
 
                         // Lookup the contact
-                        config.tasks.push((None, config.cl_api.lookup_callsign(&contact.callsign)));
+                        add_task_to_queue(
+                            &mut config.tasks,
+                            config.cl_api.lookup_callsign(&contact.callsign),
+                            None
+                        );
 
                         // Close the menu after the button was clicked
                         ui.close_menu();
@@ -1204,7 +1243,11 @@ impl Tab for ContactTableTab {
                     if ui.button("Delete contact").clicked() {
 
                         // Delete the contact
-                        config.tasks.push((None, config.db_api.delete_contact(contact.id.as_ref().unwrap().id.clone())));
+                        add_task_to_queue(
+                            &mut config.tasks,
+                            config.db_api.delete_contact(contact.id.as_ref().unwrap().id.clone()),
+                            None
+                        );
 
                         // Close the menu after the button was clicked
                         ui.close_menu();
@@ -1295,8 +1338,11 @@ impl Tab for CallsignLookupTab {
 
             // Show a button to search for the callsign
             if ui.button("\u{1F50D}").clicked() {
-                let fut = config.cl_api.lookup_callsign(&self.callsign);
-                config.tasks.push((Some(self.id), fut));
+                add_task_to_queue(
+                    &mut config.tasks,
+                    config.cl_api.lookup_callsign(&self.callsign),
+                    Some(self.id)
+                );
             }
 
             // Show a textedit box for the callsign
