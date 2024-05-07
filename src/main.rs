@@ -9,6 +9,7 @@ use egui_dock::{DockArea, DockState, TabViewer};
 use log::{debug, error, info, trace};
 use serde::{Deserialize, Serialize};
 use modules::{callsign_lookup, database, gui::TabVariant, types};
+use strum::{EnumCount, IntoEnumIterator};
 use tokio::runtime::Runtime;
 use modules::gui::Tab;
 
@@ -81,43 +82,41 @@ impl App for Gui {
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
 
-                // A combobox to select a tab that you want to add
+                // A combobox to add a tab to the GUI
                 egui::ComboBox::from_id_source("add_tab_combobox")
-                .show_index(
-                    ui,
-                    &mut config.add_tab_idx,
-                    4,
-                    |i| {
-                        match i {
+                .selected_text("Add Tab")
+                .show_ui(ui, |ui| {
+                    for tab_idx in 0..4_u32 {
+                        
+                        // Get the text for each tab variant
+                        let text = match tab_idx {
                             0 => "Home",
                             1 => "Contacts",
                             2 => "Contact Logger",
                             3.. => "Callsign Lookup"
+                        };
+
+                        // Render a selectable label for each tab variant, adding the tab if it was clicked
+                        if ui.selectable_label(false, text).clicked {
+
+                            // Create the tab
+                            let mut t = match tab_idx {
+                                0 => TabVariant::Welcome(Default::default()),
+                                1 => TabVariant::ContactTable(Default::default()),
+                                2 => TabVariant::ContactLogger(Default::default()),
+                                3.. => TabVariant::CallsignLookup(Default::default())
+                            };
+
+                            // Initialize the tab
+                            t.init(config);
+
+                            // Push the new tab to the GUI
+                            self.dock_state.push_to_focused_leaf(t);
+
                         }
+
                     }
-                );
-
-                // A button to add a tab
-                if ui.button("\u{2795}").clicked() {
-                    // Create the tab
-                    let mut t = match config.add_tab_idx {
-                        0 => TabVariant::Welcome(Default::default()),
-                        1 => TabVariant::ContactTable(Default::default()),
-                        2 => TabVariant::ContactLogger(Default::default()),
-                        3.. => TabVariant::CallsignLookup(Default::default())
-                    };
-
-                    // Initialize the tab
-                    t.init(config);
-
-                    // Push the new tab to the GUI
-                    self.dock_state.push_to_focused_leaf(t);
-                }
-
-                if ui.button("err test").clicked() {
-                    config.notifications.push(types::Notification::Error("Critical error: Yikes!".into()));
-                    config.notification_read = false;
-                }
+                });
 
                 // Limit the number of notifications to 32
                 config.notifications.shrink_to(32);
