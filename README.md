@@ -13,13 +13,12 @@ Implemented features:
   2. Contact Viewer
 
 Planned features:
-  1. Callsign lookup (Current focus)
-  2. MUF (Maximum Usable Frequency) map
-  3. DX Cluster information
-  4. Solar information
-  5. Frequency Allocation Chart for each license class
-  6. Mode chart, ideally with images (To easily identify unknown signals via waterfall)
-  7. PSKReporter map
+  1. MUF (Maximum Usable Frequency) map
+  2. DX Cluster information
+  3. Solar information
+  4. Frequency Allocation Chart for each license class
+  5. Mode chart, ideally with images (To easily identify unknown signals via waterfall)
+  6. PSKReporter map
 
 Possible features:
   1. Ability to log contacts to LOTW, QRZ, and output a CSV file

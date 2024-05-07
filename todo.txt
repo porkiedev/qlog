@@ -12,15 +12,14 @@ Wanted tabs:
     5. Solar information
     6. Hamlib rig control
     7. Statistics
-    8. Callsign search
-    9. Frequency allocation chart
+    8. Frequency allocation chart
         - Contains commonly used frequencies
         - Contains band allocations for each operator class
         - Contains power limits and legal requirements for each band
-    10. Mode chart
+    9. Mode chart
         - Contains information about different modes, including digital modes
         - Contains commonly used frequencies for each mode
-    11. PSKReporter Map
+    10. PSKReporter Map
         - Does PSKReporter have an API?
 
 Wanted features:
