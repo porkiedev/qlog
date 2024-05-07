@@ -4,7 +4,7 @@ mod modules;
 
 use std::{env::current_exe, fs, io::ErrorKind, sync::Arc};
 use eframe::App;
-use egui::{Id, RichText, Ui, Widget, WidgetText};
+use egui::{widgets, Id, RichText, Ui, Widget, WidgetText};
 use egui_dock::{DockArea, DockState, TabViewer};
 use log::{debug, error, info, trace};
 use serde::{Deserialize, Serialize};
@@ -118,6 +118,54 @@ impl App for Gui {
                     }
                 });
 
+                // Check the async task queue and send out and necessary events
+                // Note that tasks are processed sequentially, so all tasks should have timeouts on them,
+                // because one long-running task will delay all of the other tasks
+                while let Some((task_tab_id, task)) = config.tasks.first_mut() {
+
+                    // The task is finished
+                    if task.is_finished() {
+                        match config.runtime.block_on(task).unwrap() {
+                            Ok(event) => {
+
+                                // The task is bound to a specific tab
+                                if let Some(task_tab_id) = *task_tab_id {
+
+                                    // Filter for the tab with a matching ID
+                                    if let Some((_, tab)) = self.dock_state.iter_all_tabs_mut()
+                                    .find(|(_, tab)| tab.id() == task_tab_id) {
+                                        tab.process_event(config, &event);
+                                    }
+
+                                }
+                                // The task is global
+                                else {
+
+                                    // Send the event to every tab
+                                    for (_, tab) in self.dock_state.iter_all_tabs_mut() {
+                                        tab.process_event(config, &event);
+                                    }
+
+                                }
+
+                            },
+                            Err(err) => {
+                                config.notifications.push(types::Notification::Error(err.to_string()));
+                                config.notification_read = false;
+                            }
+                        }
+
+                        // Since the task is complete, remove it from the queue
+                        config.tasks.remove(0);
+                    }
+                    // The task is not finished yet so wait to check next frame
+                    else {
+                        widgets::Spinner::new().ui(ui);
+                        break;
+                    }
+
+                }
+
                 // Limit the number of notifications to 32
                 config.notifications.shrink_to(32);
 
@@ -154,55 +202,9 @@ impl App for Gui {
 
                     }
                 }
+            
             });
         });
-
-        // Check the async task queue and send out and necessary events
-        // Note that tasks are processed sequentially, so all tasks should have timeouts on them,
-        // because one long-running task will delay all of the other tasks
-        while let Some((task_tab_id, task)) = config.tasks.first_mut() {
-
-            // The task is finished
-            if task.is_finished() {
-                match config.runtime.block_on(task).unwrap() {
-                    Ok(event) => {
-
-                        // The task is bound to a specific tab
-                        if let Some(task_tab_id) = *task_tab_id {
-
-                            // Filter for the tab with a matching ID
-                            if let Some((_, tab)) = self.dock_state.iter_all_tabs_mut()
-                            .find(|(_, tab)| tab.id() == task_tab_id) {
-                                tab.process_event(config, &event);
-                            }
-
-                        }
-                        // The task is global
-                        else {
-
-                            // Send the event to every tab
-                            for (_, tab) in self.dock_state.iter_all_tabs_mut() {
-                                tab.process_event(config, &event);
-                            }
-
-                        }
-
-                    },
-                    Err(err) => {
-                        config.notifications.push(types::Notification::Error(err.to_string()));
-                        config.notification_read = false;
-                    }
-                }
-
-                // Since the task is complete, remove it from the queue
-                config.tasks.remove(0);
-            }
-            // The task is not finished yet so wait to check next frame
-            else {
-                break;
-            }
-
-        }
 
         // Iterate through each tab and process tasks before rendering the tab
         for wanted_tab_index in 0..self.dock_state.iter_all_tabs().count() {
