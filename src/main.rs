@@ -4,7 +4,7 @@ mod modules;
 
 use std::{env::current_exe, fs, io::ErrorKind, sync::Arc};
 use eframe::App;
-use egui::{Id, RichText, Ui, WidgetText};
+use egui::{Id, RichText, Ui, Widget, WidgetText};
 use egui_dock::{DockArea, DockState, TabViewer};
 use log::{debug, error, info, trace};
 use serde::{Deserialize, Serialize};
@@ -74,6 +74,7 @@ impl App for Gui {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Get a mutable reference to the gui config
         let config = &mut self.tab_viewer.config;
 
         // Render the top/menu bar
@@ -113,31 +114,47 @@ impl App for Gui {
                     self.dock_state.push_to_focused_leaf(t);
                 }
 
+                if ui.button("err test").clicked() {
+                    config.notifications.push(types::Notification::Error("Critical error: Yikes!".into()));
+                    config.notification_read = false;
+                }
+
                 // Limit the number of notifications to 32
                 config.notifications.shrink_to(32);
 
                 // A label to show the latest notification (if one exists)
                 if let Some(notification) = config.notifications.last() {
 
-                    // Get the visual of the GUI
-                    let visuals = &ui.style().visuals;
+                    // The notification hasn't been marked as read yet
+                    if !config.notification_read {
 
-                    // Create the text with different colors depending on the notification type
-                    let text = match notification {
-                        types::Notification::Info(t) => RichText::new(t),
-                        types::Notification::Warning(t) => RichText::new(t).color(visuals.warn_fg_color),
-                        types::Notification::Error(t) => RichText::new(t).color(visuals.error_fg_color)
-                    };
+                        // Get the visual of the GUI
+                        let visuals = &ui.style().visuals;
 
-                    // Render the text, from right to left
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add(egui::Label::new(text).truncate(true));
+                        // Create the text with different colors depending on the notification type
+                        let text = match notification {
+                            types::Notification::Info(t) => RichText::new(t),
+                            types::Notification::Warning(t) => RichText::new(t).color(visuals.warn_fg_color),
+                            types::Notification::Error(t) => RichText::new(t).color(visuals.error_fg_color)
+                        };
 
-                        ui.label(config.notifications.len().to_string());
-                    });
+                        // Render the text, from right to left
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 
+                            // A checkmark button to mark the notification as read
+                            if ui.button("\u{2714}").on_hover_text("Mark notification as read").clicked() {
+                                config.notification_read = true;
+                            }
+
+                            // A label to show the notification
+                            egui::Label::new(text)
+                            .truncate(true)
+                            .ui(ui);
+
+                        });
+
+                    }
                 }
-
             });
         });
 
@@ -172,7 +189,10 @@ impl App for Gui {
                         }
 
                     },
-                    Err(err) => config.notifications.push(types::Notification::Error(err.to_string()))
+                    Err(err) => {
+                        config.notifications.push(types::Notification::Error(err.to_string()));
+                        config.notification_read = false;
+                    }
                 }
 
                 // Since the task is complete, remove it from the queue
@@ -323,6 +343,9 @@ struct GuiConfig {
     /// Notifications. This could be status, warning, or error messages that need to be shown at the root level of the GUI
     #[serde(skip)]
     notifications: Vec<types::Notification>,
+    /// Has the latest notification been marked as read?
+    #[serde(skip)]
+    notification_read: bool,
     /// Async tasks. If an ID is provided, the event will only be sent to the tab with that ID, otherwise the update is global.
     /// This enforces synchronization between tabs.
     #[serde(skip)]
@@ -335,8 +358,8 @@ impl Default for GuiConfig {
     fn default() -> Self {
         
         let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build tokio runtime");
-        // let db = database::DatabaseInterface::new(runtime.handle().clone(), None, None).unwrap();
-        let db = database::DatabaseInterface::new(runtime.handle().clone(), Some("ws://127.0.0.1:8000".into()), None).unwrap();
+        let db = database::DatabaseInterface::new(runtime.handle().clone(), None, None).unwrap();
+        // let db = database::DatabaseInterface::new(runtime.handle().clone(), Some("ws://127.0.0.1:8000".into()), None).unwrap();
         let cl_api = callsign_lookup::CallsignLookup::new(runtime.handle().clone(), None);
 
         Self {
@@ -344,6 +367,7 @@ impl Default for GuiConfig {
             db_api: Arc::new(db),
             cl_api,
             notifications: Default::default(),
+            notification_read: Default::default(),
             tasks: Default::default(),
             add_tab_idx: Default::default()
         }
