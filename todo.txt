@@ -51,8 +51,5 @@ TODOs:
           we should detect that when the application is launched and automatically migrate the database to the new version
         - Warning: How would this work with a remote database?
           Perhaps we just need to avoid breaking database changes altogether, though that may be unrealistic
-    2. Whether you're adding or modifying a contact, under the MODE field, if 'Other' is selected,
-        we need to create a context menu/textbox to enter the mode name
-    3. Show the contact duration in the contact table
-    4. Optimize the contact table for memory usage by only querying for the visible rows, +/- 50~ rows
-    5. Add a loading icon when an async task is running in the background so the user isn't confused during slow web requests
+    2. Show the contact duration in the contact table
+    3. Optimize the contact table for memory usage by only querying for the visible rows, +/- 50~ rows
