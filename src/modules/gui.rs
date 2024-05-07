@@ -1190,8 +1190,8 @@ impl Tab for ContactTableTab {
                 response.context_menu(|ui| {
 
                     // A button to lookup the callsign
-                    if ui.button("Lookup callsign").clicked() {
-                        
+                    if ui.button("Lookup callsign").on_hover_text("You must have a callsign lookup tab open to see the result").clicked() {
+
                         // Lookup the contact
                         config.tasks.push((None, config.cl_api.lookup_callsign(&contact.callsign)));
 

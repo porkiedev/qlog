@@ -342,7 +342,7 @@ struct GuiConfig {
     /// Notifications. This could be status, warning, or error messages that need to be shown at the root level of the GUI
     #[serde(skip)]
     notifications: Vec<types::Notification>,
-    /// Has the latest notification been marked as read?
+    /// Has the latest notification been read? If true, the latest notification is hidden.
     #[serde(skip)]
     notification_read: bool,
     /// Async tasks. If an ID is provided, the event will only be sent to the tab with that ID, otherwise the update is global.

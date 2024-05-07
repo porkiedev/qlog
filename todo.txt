@@ -55,5 +55,4 @@ TODOs:
         we need to create a context menu/textbox to enter the mode name
     3. Show the contact duration in the contact table
     4. Optimize the contact table for memory usage by only querying for the visible rows, +/- 50~ rows
-    5. If a contact in the table is right-clicked, and then the lookup callsign button is clicked,
-        we should open a callsign lookup menu if one isn't already open
+    5. Add a loading icon when an async task is running in the background so the user isn't confused during slow web requests
