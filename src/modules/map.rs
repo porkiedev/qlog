@@ -7,6 +7,7 @@ use std::{collections::HashMap, ops::Neg};
 use egui::{emath::TSTransform, Color32, ColorImage, Mesh, Rect, TextureHandle, Vec2, Widget};
 use geo_types::Point;
 use log::debug;
+use rand::Rng;
 
 
 const BLANK_IMAGE_BYTES: &[u8; 564] = include_bytes!("../../blank-255-tile.png");
@@ -60,24 +61,61 @@ impl Widget for &mut MapWidget {
         let center_tile_coords = (self.transform.translation + map_center) / 256.0;
         let center_tile_coords = (center_tile_coords.x as u32, center_tile_coords.y as u32);
 
-        ui.label(format!("Center tile: {:?}", center_tile_coords));
-        ui.label(format!("Map rect: {:?}", map_rect.translate(Vec2::new(256.0, 256.0))));
+        // Get the tile coordinates of the first (top left) tile
+        let first_tile_coords = self.transform.translation / 256.0;
+        let first_tile_coords = (first_tile_coords.x as u32, first_tile_coords.y as u32);
 
-        if ui.button("Bound test").clicked() {
-            let tile_rect_center = map_rect.center();
-            let tile_rect = Rect::from_center_size(tile_rect_center, Vec2::new(256.0, 256.0));
-            let tile_rect = tile_rect.translate(Vec2::new(256.0*4.2, 0.0));
+        ui.label(format!("Top-left (first) tile: {:?}", first_tile_coords));
 
-            debug!("Is tile rect visible: {}", map_rect.intersects(tile_rect));
-
-            let mut center_tile_offset = (self.transform.translation + map_center);
-            center_tile_offset.x %= 256.0;
-            center_tile_offset.y %= 256.0;
-            debug!("Center tile offset: {:?}", center_tile_offset);
-
-            // map_painter.add(tile_rect);
-            map_painter.rect_filled(tile_rect, 0.0, Color32::RED);
+        if ui.button("Test rect scaling").clicked() {
+            let r = Rect::from_min_size(map_rect.left_top(), Vec2::new(256.0, 256.0));
+            debug!("Rect before: {:?}", r.size());
+            debug!("Rect now: {:?}", (r * 1.1).size());
         }
+
+        let mut tiles = Default::default();
+        let start_tile = TileId { x: first_tile_coords.0, y: first_tile_coords.1, zoom: 0 };
+        
+        let mut tile_offset = self.transform.translation;
+
+        if tile_offset.x.is_sign_positive() {
+            tile_offset.x %= 256.0;
+        }
+        if tile_offset.y.is_sign_positive() {
+            tile_offset.y %= 256.0;
+        }
+
+        let start_tile_rect = Rect::from_min_size(map_rect.left_top() - tile_offset, Vec2::new(256.0, 256.0));
+
+        fill_tiles(ui.ctx(), map_rect, (start_tile, start_tile_rect), &mut tiles);
+
+        ui.label(format!("Received {} tiles", tiles.len()));
+        
+        for tile in tiles {
+            if let Some(tile_rect) = tile.1 {
+                let rand_num: u8 = rand::thread_rng().gen();
+                map_painter.rect_filled(tile_rect, 0.0, Color32::from_black_alpha(rand_num));
+                // map_painter.rect_filled(tile_rect, 0.0, Color32::RED);
+            }
+        }
+
+
+
+        // let mut tile_offset = self.transform.translation;
+        // // tile_offset.x %= 256.0;
+        // // tile_offset.y %= 256.0;
+        
+        // let (tile_x, tile_y) = (1_f32, 1_f32);
+        // let mut tile_rect = Rect::from_min_size(map_rect.left_top(), Vec2::new(256.0 * tile_x, 256.0 * tile_y));
+        // tile_rect = tile_rect.translate(-self.transform.translation);
+
+        // // debug!("Is tile rect visible: {}", map_rect.intersects(tile_rect));
+        // // debug!("Tile offset: {:?}", tile_offset);
+        // ui.label(format!("Is tile rect visible: {}", map_rect.intersects(tile_rect)));
+        // ui.label(format!("Tile offset: {:?}", tile_offset));
+
+        // map_painter.rect_filled(tile_rect, 0.0, Color32::RED);
+
 
         // let mut meshes = Default::default();
         // fill_tiles(
@@ -183,25 +221,102 @@ impl std::fmt::Debug for MapWidget {
 fn fill_tiles(
     ctx: &egui::Context,
     map_rect: Rect,
-    input_tile: TileId,
-    tile_manager: &mut TileManager,
-    tile_meshes: &mut HashMap<TileId, TextureHandle>
+    input_tile: (TileId, Rect),
+    // tile_manager: &mut TileManager,
+    tiles: &mut HashMap<TileId, Option<Rect>>
+    // tile_meshes: &mut HashMap<TileId, TextureHandle>
 ) {
 
     // tile_manager.get_tile_image(tile_id)
     // let tile = tile_manager.get_tile(starting_tile);
     // let projected_tile = starting_tile.
 
-    let tile_pos = input_tile.pixels();
+    // let tile_pos = input_tile.pixels();
 
-    // If the tile mesh is already cached
-    if let Some(mesh) = tile_meshes.get(&input_tile) {
-        // mesh.transform(transform)
-    } else {
-        let texture_handle = ctx.load_texture(format!("{:?}", input_tile), tile_manager.get_tile_image(&input_tile), egui::TextureOptions::LINEAR);
-        // let mesh = Mesh::with_texture(texture_handle.id());
-        tile_meshes.insert(input_tile, texture_handle);
+    // Insert the input tile into the map
+    if input_tile.0.is_in_range() && map_rect.intersects(input_tile.1) {
+        tiles.insert(input_tile.0, Some(input_tile.1));
     }
+    // if map_rect.intersects(input_tile.1) {
+    //     tiles.insert(input_tile.0, Some(input_tile.1));
+    // }
+
+    let next_tile_rect = input_tile.1;
+    if let Some(next_tile_id) = input_tile.0.north() {
+        if tiles.get(&next_tile_id).is_none() {
+
+            let next_tile_rect = next_tile_rect.translate(Vec2::new(0.0, -256.0));
+            if map_rect.intersects(next_tile_rect) {
+                fill_tiles(ctx, map_rect, (next_tile_id, next_tile_rect), tiles);
+            }
+            
+        }
+    }
+    if let Some(next_tile_id) = input_tile.0.east() {
+        if tiles.get(&next_tile_id).is_none() {
+
+            let next_tile_rect = next_tile_rect.translate(Vec2::new(256.0, 0.0));
+            if map_rect.intersects(next_tile_rect) {
+                fill_tiles(ctx, map_rect, (next_tile_id, next_tile_rect), tiles);
+            }
+            
+        }
+    }
+    if let Some(next_tile_id) = input_tile.0.south() {
+        if tiles.get(&next_tile_id).is_none() {
+
+            let next_tile_rect = next_tile_rect.translate(Vec2::new(0.0, 256.0));
+            if map_rect.intersects(next_tile_rect) {
+                fill_tiles(ctx, map_rect, (next_tile_id, next_tile_rect), tiles);
+            }
+            
+        }
+    }
+    if let Some(next_tile_id) = input_tile.0.west() {
+        if tiles.get(&next_tile_id).is_none() {
+
+            let next_tile_rect = next_tile_rect.translate(Vec2::new(-256.0, 0.0));
+            if map_rect.intersects(next_tile_rect) {
+                fill_tiles(ctx, map_rect, (next_tile_id, next_tile_rect), tiles);
+            }
+            
+        }
+    }
+
+    // let next_tile_rect = input_tile.1;
+    // if let Some(next_tile_id) = input_tile.0.north() {
+    //     let next_tile_rect = next_tile_rect.translate(Vec2::new(0.0, -256.0));
+    //     if map_rect.intersects(next_tile_rect) {
+    //         fill_tiles(ctx, map_rect, (next_tile_id, next_tile_rect), tiles);
+    //     }
+    // }
+    // else if let Some(next_tile_id) = input_tile.0.east() {
+    //     let next_tile_rect = next_tile_rect.translate(Vec2::new(256.0, 0.0));
+    //     if map_rect.intersects(next_tile_rect) {
+    //         fill_tiles(ctx, map_rect, (next_tile_id, next_tile_rect), tiles);
+    //     }
+    // }
+    // else if let Some(next_tile_id) = input_tile.0.south() {
+    //     let next_tile_rect = next_tile_rect.translate(Vec2::new(0.0, 256.0));
+    //     if map_rect.intersects(next_tile_rect) {
+    //         fill_tiles(ctx, map_rect, (next_tile_id, next_tile_rect), tiles);
+    //     }
+    // }
+    // else if let Some(next_tile_id) = input_tile.0.west() {
+    //     let next_tile_rect = next_tile_rect.translate(Vec2::new(-256.0, 0.0));
+    //     if map_rect.intersects(next_tile_rect) {
+    //         fill_tiles(ctx, map_rect, (next_tile_id, next_tile_rect), tiles);
+    //     }
+    // }
+
+    // // If the tile mesh is already cached
+    // if let Some(mesh) = tile_meshes.get(&input_tile) {
+    //     // mesh.transform(transform)
+    // } else {
+    //     let texture_handle = ctx.load_texture(format!("{:?}", input_tile), tile_manager.get_tile_image(&input_tile), egui::TextureOptions::LINEAR);
+    //     // let mesh = Mesh::with_texture(texture_handle.id());
+    //     tile_meshes.insert(input_tile, texture_handle);
+    // }
 
 }
 
@@ -222,7 +337,7 @@ impl TileManager {
 }
 
 /// The ID of a map tile
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Clone, Copy, Eq, Hash)]
 struct TileId {
     x: u32,
     y: u32,
@@ -238,36 +353,72 @@ impl TileId {
         egui::Pos2 { x, y }
     }
 
+    /// Does this TileID correspond to an actual map tile? (i.e. is this tile in bounds of earth)
+    /// 
+    /// Returns false if the tile is *outside of the range of the world*
+    fn is_in_range(&self) -> bool {
+        // Get the maximum number of tiles in either direction
+        // TODO: This number needs to change with the zoom level
+        let max_tiles = 4 / 2;
+
+        // Return false if the tile is outside of the world range
+        !(self.x > max_tiles || self.y > max_tiles)
+    }
+
     fn north(&self) -> Option<Self> {
-        Some(Self {
+        let s = Self {
             x: self.x,
             y: self.y.checked_sub(1)?,
             zoom: self.zoom
-        })
+        };
+
+        if s.is_in_range() {
+            Some(s)
+        } else {
+            None
+        }
     }
 
     fn east(&self) -> Option<Self> {
-        Some(Self {
+        let s = Self {
             x: self.x + 1,
             y: self.y,
             zoom: self.zoom
-        })
+        };
+
+        if s.is_in_range() {
+            Some(s)
+        } else {
+            None
+        }
     }
 
     fn south(&self) -> Option<Self> {
-        Some(Self {
+        let s = Self {
             x: self.x,
             y: self.y + 1,
             zoom: self.zoom
-        })
+        };
+
+        if s.is_in_range() {
+            Some(s)
+        } else {
+            None
+        }
     }
 
     fn west(&self) -> Option<Self> {
-        Some(Self {
+        let s = Self {
             x: self.x.checked_sub(1)?,
             y: self.y,
             zoom: self.zoom
-        })
+        };
+
+        if s.is_in_range() {
+            Some(s)
+        } else {
+            None
+        }
     }
 
 }
