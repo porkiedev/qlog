@@ -2,7 +2,7 @@
 
 mod modules;
 
-use std::{env::current_exe, fs, io::ErrorKind, sync::Arc};
+use std::{env::current_exe, fs, io::ErrorKind, sync::Arc, time::{Duration, Instant}};
 use eframe::App;
 use egui::{widgets, Id, RichText, Ui, Widget, WidgetText};
 use egui_dock::{DockArea, DockState, TabViewer};
@@ -23,10 +23,18 @@ fn main() {
     // Initialize logger
     env_logger::Builder::new().filter(Some(module_path!()), log::LevelFilter::Debug).init();
 
+    // Initialize tracy client
+    let _client = tracy_client::Client::start();
+
     // Start GUI
+    let options = eframe::NativeOptions {
+        vsync: false,
+        ..Default::default()
+    };
+
     let _ = eframe::run_native(
         "QLog",
-        eframe::NativeOptions::default(),
+        options,
         Box::new(|_cc| Box::<Gui>::default())
     );
 }
@@ -75,8 +83,60 @@ impl App for Gui {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
         // Get a mutable reference to the gui config
         let config = &mut self.tab_viewer.config;
+
+        // A bool used to draw a spinner if there are any pending background tasks
+        let mut pending_tasks = false;
+
+        // Check the async task queue and send out and necessary events
+        // Note that tasks are processed sequentially, so all tasks should have timeouts on them,
+        // because one long-running task will delay all of the other tasks
+        while let Some((task_tab_id, task)) = config.tasks.first_mut() {
+
+            // The task is finished
+            if task.is_finished() {
+                match config.runtime.block_on(task).unwrap() {
+                    Ok(event) => {
+
+                        // The task is bound to a specific tab
+                        if let Some(task_tab_id) = *task_tab_id {
+
+                            // Filter for the tab with a matching ID
+                            if let Some((_, tab)) = self.dock_state.iter_all_tabs_mut()
+                            .find(|(_, tab)| tab.id() == task_tab_id) {
+                                tab.process_event(config, &event);
+                            }
+
+                        }
+                        // The task is global
+                        else {
+
+                            // Send the event to every tab
+                            for (_, tab) in self.dock_state.iter_all_tabs_mut() {
+                                tab.process_event(config, &event);
+                            }
+
+                        }
+
+                    },
+                    Err(err) => {
+                        config.notifications.push(types::Notification::Error(err.to_string()));
+                        config.notification_read = false;
+                    }
+                }
+
+                // Since the task is complete, remove it from the queue
+                config.tasks.remove(0);
+            }
+            // The task is not finished yet so wait to check next frame
+            else {
+                pending_tasks = true;
+                break;
+            }
+
+        }
 
         // Render the top/menu bar
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
@@ -120,53 +180,12 @@ impl App for Gui {
                     }
                 });
 
-                // Check the async task queue and send out and necessary events
-                // Note that tasks are processed sequentially, so all tasks should have timeouts on them,
-                // because one long-running task will delay all of the other tasks
-                while let Some((task_tab_id, task)) = config.tasks.first_mut() {
-
-                    // The task is finished
-                    if task.is_finished() {
-                        match config.runtime.block_on(task).unwrap() {
-                            Ok(event) => {
-
-                                // The task is bound to a specific tab
-                                if let Some(task_tab_id) = *task_tab_id {
-
-                                    // Filter for the tab with a matching ID
-                                    if let Some((_, tab)) = self.dock_state.iter_all_tabs_mut()
-                                    .find(|(_, tab)| tab.id() == task_tab_id) {
-                                        tab.process_event(config, &event);
-                                    }
-
-                                }
-                                // The task is global
-                                else {
-
-                                    // Send the event to every tab
-                                    for (_, tab) in self.dock_state.iter_all_tabs_mut() {
-                                        tab.process_event(config, &event);
-                                    }
-
-                                }
-
-                            },
-                            Err(err) => {
-                                config.notifications.push(types::Notification::Error(err.to_string()));
-                                config.notification_read = false;
-                            }
-                        }
-
-                        // Since the task is complete, remove it from the queue
-                        config.tasks.remove(0);
-                    }
-                    // The task is not finished yet so wait to check next frame
-                    else {
-                        widgets::Spinner::new().ui(ui);
-                        break;
-                    }
-
+                // If there are pending tasks (i.e. tasks running in the background), show a spinner
+                if pending_tasks {
+                    widgets::Spinner::new().ui(ui);
                 }
+
+                ui.label(format!("FPS: {}", config.fps_counter.tick()));
 
                 // Limit the number of notifications to 32
                 config.notifications.shrink_to(32);
@@ -208,35 +227,17 @@ impl App for Gui {
             });
         });
 
-        // Iterate through each tab and process tasks before rendering the tab
-        for wanted_tab_index in 0..self.dock_state.iter_all_tabs().count() {
-
-            // Initialize variables for the tab that we want, and a vec containing all of the other tabs
-            let mut wanted_tab = None;
-            let mut other_tabs = Vec::new();
-
-            // Iterate through each tab and populate the 
-            for (tab_index, (_, tab)) in self.dock_state.iter_all_tabs_mut().enumerate() {
-                // This is the tab we want, so put it in the wanted_tab var
-                if tab_index == wanted_tab_index {
-                    wanted_tab = Some(tab);
-                }
-                // This is not the tab we want, so put it in the other_tabs vec
-                else {
-                    other_tabs.push(tab);
-                }
-            }
-    
-            // If we found the tab we want (we always should), process tasks
-            if let Some(tab) = wanted_tab {
-                tab.process_tasks(config, other_tabs);
-            }
-
-        }
-
+        let _span = tracy_client::span!("Show DockArea");
         // Render the dockable area
         DockArea::new(&mut self.dock_state)
         .show(ctx, &mut self.tab_viewer);
+        drop(_span);
+
+        // Immediate mode. Immediately requests a redraw.
+        // TODO: This is only for debugging. Should be toggleable.
+        ctx.request_repaint();
+
+        tracy_client::Client::running().unwrap().frame_mark();
 
     }
 }
@@ -310,6 +311,7 @@ impl TabViewer for GuiTabViewer {
     //
     // For non-interactive tabs, this is a static value, but each interactive tab must have a unique ID otherwise stuff gets weird
     fn id(&mut self, tab: &mut Self::Tab) -> Id {
+        let _span = tracy_client::span!("TabViewer::id()");
         tab.id()
     }
 
@@ -319,16 +321,35 @@ impl TabViewer for GuiTabViewer {
 
     // Renders the title for the tab
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+        let _span = tracy_client::span!("TabViewer::title()");
         tab.title()
     }
 
     // Renders the UI for the tab
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+        let _span = tracy_client::span!("TabViewer::ui()");
+        _span.emit_text(tab.as_ref());
         tab.ui(&mut self.config, ui)
     }
 }
 
+/// An FPS counter
+#[derive(Debug, Default)]
+struct FpsCounter {
+    frames: Vec<Instant>
+}
+impl FpsCounter {
+    /// Returns the number of frames rendered
+    fn tick(&mut self) -> usize {
+        let now = Instant::now();
+        let a_second_ago = now - Duration::from_secs(1);
 
+        self.frames.retain(|i| i > &a_second_ago);
+        
+        self.frames.push(now);
+        self.frames.len()
+    }
+}
 
 /// The GUI config
 #[derive(Debug, Serialize, Deserialize)]
@@ -353,6 +374,9 @@ struct GuiConfig {
     /// This enforces synchronization between tabs.
     #[serde(skip)]
     pub tasks: Vec<(Option<Id>, types::SpawnedFuture)>,
+    /// The FPS counter
+    #[serde(skip)]
+    fps_counter: FpsCounter,
     /// The selected index of the 'add tab' combobox in the top/menu bar
     #[serde(skip)]
     add_tab_idx: usize
@@ -372,6 +396,7 @@ impl Default for GuiConfig {
             notifications: Default::default(),
             notification_read: Default::default(),
             tasks: Default::default(),
+            fps_counter: Default::default(),
             add_tab_idx: Default::default()
         }
     }

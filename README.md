@@ -11,6 +11,7 @@ Project goals:
 Implemented features:
   1. Contact Logger
   2. Contact Viewer
+  3. Callsign Lookup
 
 Planned features:
   1. MUF (Maximum Usable Frequency) map
