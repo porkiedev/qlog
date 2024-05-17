@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use tokio::sync::{oneshot, watch};
 use crate::GuiConfig;
-use super::{callsign_lookup, database, types::{self, SpawnedFuture}};
+use super::{callsign_lookup, database, pskreporter, types::{self, SpawnedFuture}};
 
 
 /// The tab trait. This should be implemented for each tab variant
@@ -37,15 +37,6 @@ pub trait Tab {
     #[allow(unused)]
     fn init(&mut self, config: &mut GuiConfig) {}
 
-    /// A task processing function. This is called before each frame, for every tab, regardless of its visibility.
-    /// 
-    /// If your tab spawns async tasks and needs to check if the tasks are finished before rendering, you can do it in this function.
-    /// 
-    /// Also, if your tab makes changes that requires synchronization between other tabs, you are given mutable access to all other tabs,
-    /// which you can use to iterate through every tab and call `process_event` with your event.
-    #[allow(unused)]
-    fn process_tasks(&mut self, config: &mut GuiConfig, mut other_tabs: Vec<&mut TabVariant>) {}
-
     /// If you want your tab to update on one (or more) of the events in `types::GlobalEvent`,
     /// implement this function and pattern match for the event that you want to respond to.
     #[allow(unused)]
@@ -59,7 +50,7 @@ pub trait Tab {
 
 
 /// The different GUI tab variants
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, strum_macros::AsRefStr)]
 pub enum TabVariant {
     /// The default welcome tab
     Welcome(Box<WelcomeTab>),
@@ -68,7 +59,9 @@ pub enum TabVariant {
     /// A tab for logging contacts
     ContactLogger(Box<ContactLoggerTab>),
     /// A tab for looking up callsigns
-    CallsignLookup(Box<CallsignLookupTab>)
+    CallsignLookup(Box<CallsignLookupTab>),
+    /// A tab for interfacing with PSKReporter
+    PSKReporter(Box<pskreporter::PSKReporterTab>)
 }
 impl Tab for TabVariant {
 
@@ -78,6 +71,7 @@ impl Tab for TabVariant {
             TabVariant::ContactTable(data) => data.id(),
             TabVariant::ContactLogger(data) => data.id(),
             TabVariant::CallsignLookup(data) => data.id(),
+            TabVariant::PSKReporter(data) => data.id(),
         }
     }
 
@@ -87,6 +81,7 @@ impl Tab for TabVariant {
             TabVariant::ContactTable(data) => data.scroll_bars(),
             TabVariant::ContactLogger(data) => data.scroll_bars(),
             TabVariant::CallsignLookup(data) => data.scroll_bars(),
+            TabVariant::PSKReporter(data) => data.scroll_bars(),
         }
     }
 
@@ -96,6 +91,7 @@ impl Tab for TabVariant {
             TabVariant::ContactTable(data) => data.title(),
             TabVariant::ContactLogger(data) => data.title(),
             TabVariant::CallsignLookup(data) => data.title(),
+            TabVariant::PSKReporter(data) => data.title(),
         }
     }
 
@@ -105,15 +101,7 @@ impl Tab for TabVariant {
             TabVariant::ContactTable(data) => data.init(config),
             TabVariant::ContactLogger(data) => data.init(config),
             TabVariant::CallsignLookup(data) => data.init(config),
-        }
-    }
-
-    fn process_tasks(&mut self, config: &mut GuiConfig, other_tabs: Vec<&mut TabVariant>) {
-        match self {
-            TabVariant::Welcome(data) => data.process_tasks(config, other_tabs),
-            TabVariant::ContactTable(data) => data.process_tasks(config, other_tabs),
-            TabVariant::ContactLogger(data) => data.process_tasks(config, other_tabs),
-            TabVariant::CallsignLookup(data) => data.process_tasks(config, other_tabs),
+            TabVariant::PSKReporter(data) => data.init(config),
         }
     }
 
@@ -123,6 +111,7 @@ impl Tab for TabVariant {
             TabVariant::ContactTable(data) => data.process_event(config, event),
             TabVariant::ContactLogger(data) => data.process_event(config, event),
             TabVariant::CallsignLookup(data) => data.process_event(config, event),
+            TabVariant::PSKReporter(data) => data.process_event(config, event),
         }
     }
 
@@ -132,6 +121,7 @@ impl Tab for TabVariant {
             TabVariant::ContactTable(data) => data.ui(config, ui),
             TabVariant::ContactLogger(data) => data.ui(config, ui),
             TabVariant::CallsignLookup(data) => data.ui(config, ui),
+            TabVariant::PSKReporter(data) => data.ui(config, ui),
         }
     }
     
@@ -1466,7 +1456,7 @@ fn frequency_parser(input: &str) -> Option<f64> {
 /// Generates a random [egui::Id]
 /// 
 /// This is typically used to differentiate between different tabs
-fn generate_random_id() -> Id {
+pub fn generate_random_id() -> Id {
     // Generate a new random ID
     Id::new(rand::thread_rng().next_u64())
 }
