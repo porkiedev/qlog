@@ -6,6 +6,7 @@ use std::{collections::HashMap, ops::Neg};
 
 use egui::{emath::TSTransform, Color32, ColorImage, Mesh, Rect, TextureHandle, Vec2, Widget};
 use geo_types::Point;
+use geoutils::Location;
 use log::{debug, error};
 use rand::Rng;
 use strum::IntoEnumIterator;
@@ -30,7 +31,8 @@ impl MapLocation {
 #[derive(Default)]
 pub struct MapWidget {
     center_tile: TileId,
-    relative_position: Vec2,
+    /// The relative offset for the center tile in pixels
+    relative_offset: Vec2,
     zoom: f32,
     /// The tilemanager system is responsible for caching and fetching any tiles that the map widget requires
     tile_manager: TileManager,
@@ -49,14 +51,99 @@ impl MapWidget {
         self.texture_handle = Some(texture_handle);
 
     }
+
+    /// Returns the location of the center of the map
+    fn get_center_location(&self) -> Location {
+
+        // Calculate the on-screen size of a tile
+        let tile_size = {
+            // Calculate the scaling value
+            let scale_zoom = (self.zoom % 1.0) + 1.0;
+            256.0 * scale_zoom
+        };
+
+        // Get the width of the entire world map
+        let map_size = tile_size * self.center_tile.max_tiles() as f32;
+
+        // Calculate the latitude
+        let latitude = {
+            // Get the tile size by dividing the offset by the tile size
+            let mut center_x_pixels = self.relative_offset.x / tile_size;
+            // Add the tile X coordinate
+            center_x_pixels += (self.center_tile.x + 1) as f32;
+            // Multiply by the tile size to get the total number of pixels in context of the world map
+            center_x_pixels *= tile_size;
+            // Subtract half of the tile size to compensate for some center tile offset trickery
+            center_x_pixels -= tile_size / 2.0;
+            
+            // Calculate the latitude
+            (360.0 * (center_x_pixels / map_size)) - 180.0
+        };
+
+        // Calculate the longitude
+        let longitude = {
+            // Get the tile size by dividing the offset by the tile size
+            let mut center_y_pixels = self.relative_offset.y / tile_size;
+            // Add the tile Y coordinate
+            center_y_pixels += (self.center_tile.y + 1) as f32;
+            // Multiply by the tile size to get the total number of pixels in context of the world map
+            center_y_pixels *= tile_size;
+            // Subtract half of the tile size to compensate for some center tile offset trickery
+            center_y_pixels -= tile_size / 2.0;
+
+            // Calculate the longitude
+            -((170.102_26 * (center_y_pixels / map_size)) - 85.051_13)
+        };
+
+        Location::new(latitude, longitude)
+
+    }
+
+    /// Sets the map center to the provided location
+    fn set_center_location(&mut self, location: Location) {
+
+        // Calculate the tile size
+        let tile_size = {
+            // Calculate the scaling value
+            let scale_zoom = (self.zoom % 1.0) + 1.0;
+            256.0 * scale_zoom as f64
+        };
+
+        // Get the width of the entire world map at our current zoom level in tiles
+        let map_size_tiles = self.center_tile.max_tiles() as f64;
+
+        let x_ratio = (location.latitude() + 180.0) / 360.0;
+        let mut x_pixels = ((map_size_tiles * x_ratio) * tile_size).floor();
+        let x_tiles = (x_pixels / tile_size) as u32;
+        x_pixels %= tile_size;
+        x_pixels += tile_size * 0.5;
+
+        self.center_tile.x = x_tiles;
+        self.relative_offset.x = x_pixels as f32;
+
+        debug!("Setting X to {x_pixels}");
+        debug!("Latitude X is {}", location.latitude());
+        debug!("Tiles X is {x_tiles}");
+        // let rah = (self.center_tile.y + 1) as f32 * tile_size;
+
+
+    }
 }
 impl Widget for &mut MapWidget {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        
+        let _span = tracy_client::span!("MapWidget::ui()");
+
+        let _span = tracy_client::span!("Render load texture button");
         // Test load texture button
         if ui.button("Load texture").clicked() {
-            self.load_texture(ui.ctx());
+            // self.load_texture(ui.ctx());
+            // let location = Location::new(0.0, 0.0);
+            // calculate_coords_from_tile_and_offset(self.center_tile, self.zoom, self.relative_offset);
+
+            let loc = self.get_center_location();
+            self.set_center_location(loc);
         }
+        drop(_span);
 
         // Allocate the ract for the entire map and add senses to it
         let (id, mut map_rect) = ui.allocate_space(ui.available_size());
@@ -65,44 +152,38 @@ impl Widget for &mut MapWidget {
         // Allocate a painter that only clips anything outside the map rect
         let map_painter = ui.painter_at(map_rect);
 
-        let corrected_tile_size = 256.0 * (self.zoom + 1.0);
+        let tile_zoom = (self.zoom / 1.0) as u8;
+        let scale_zoom = (self.zoom % 1.0) + 1.0;
+        self.center_tile.zoom = tile_zoom;
+        let corrected_tile_size = 256.0 * scale_zoom;
 
-        // Get the tile coordinates of the center tile. This serves as our starting point.
-        // From here, we branch out, rendering a tile if it fits within the map rectangle
-        let map_center = map_rect.center().to_vec2() - map_rect.left_top().to_vec2();
-        let center_tile_coords = (self.relative_position + map_center) / corrected_tile_size;
-        let center_tile_coords = center_tile_coords.floor();
-        let mut center_tile_coords = (center_tile_coords.x as u32, center_tile_coords.y as u32);
+        // // Get the tile coordinates of the center tile. This serves as our starting point.
+        // // From here, we branch out, rendering a tile if it fits within the map rectangle
+        // let map_center = map_rect.center().to_vec2() - map_rect.left_top().to_vec2();
+        // let center_tile_coords = (self.relative_position + map_center) / corrected_tile_size;
+        // let center_tile_coords = center_tile_coords.floor();
+        // let mut center_tile_coords = (center_tile_coords.x as u32, center_tile_coords.y as u32);
 
+        // Create the starting (center) tile
         let start_tile = self.center_tile;
+        let start_tile_rect = Rect::from_center_size(map_rect.center() - self.relative_offset, Vec2::new(corrected_tile_size, corrected_tile_size));
 
-        // map_center
-        // let start_tile_rect = Rect::from_min_size(map_rect.left_top() - tile_offset, Vec2::new(corrected_tile_size, corrected_tile_size));
-        let start_tile_rect = Rect::from_center_size(map_rect.center() - self.relative_position, Vec2::new(corrected_tile_size, corrected_tile_size));
-
+        // Create a hashmap that will contain the visible tiles and their corresponding rects
         let mut tiles = HashMap::with_capacity(MAX_TILES);
-        // fill_tiles(ui.ctx(), map_rect, (start_tile, start_tile_rect), &mut tiles);
-        {
-            let _span = tracy_client::span!("Fill tiles");
-            fill_tiles_breadth(ui.ctx(), map_rect, (start_tile, start_tile_rect), &mut tiles);
-        }
+        // Fill the tiles hashmap using the breadth/4-way flood fill algorithm
+        fill_tiles_breadth(ui.ctx(), map_rect, (start_tile, start_tile_rect), &mut tiles);
 
-        ui.label(format!("Rendering {} tiles", tiles.len()));
-        ui.label(format!("Center tile: {:?}", start_tile));
-        ui.label(format!("Center coords with offset: {:?}", map_rect.center() - self.relative_position));
-
-        // map_painter.rect_filled(start_tile_rect, 0.0, Color32::from_black_alpha(125));
+        // ui.label(format!("Rendering {} tiles", tiles.len()));
+        // ui.label(format!("Center tile: {:?}", start_tile));
+        // ui.label(format!("Center coords with offset: {:?}", map_rect.center() - self.relative_position));
+        // ui.label(format!("Tile zoom: {tile_zoom} / {scale_zoom}"));
 
         for tile in tiles {
-            // if let Some(tile_rect) = tile.1 {
-                // let rand_num: u8 = rand::thread_rng().gen();
-                if tile.0.x == 4 && tile.0.y == 4 {
-                    map_painter.rect_filled(tile.1, 0.0, Color32::RED);
-                } else {
-                    map_painter.rect_filled(tile.1, 0.0, Color32::from_white_alpha(((tile.0.x + tile.0.y) as u8).wrapping_mul(10)));
-                }
-                // map_painter.rect_filled(tile_rect, 0.0, Color32::RED);
-            // }
+            if tile.0.x == 4 && tile.0.y == 4 {
+                map_painter.rect_filled(tile.1, 0.0, Color32::RED);
+            } else {
+                map_painter.rect_filled(tile.1, 0.0, Color32::from_white_alpha(((tile.0.x + tile.0.y) as u8).wrapping_mul(10)));
+            }
         }
 
         // {
@@ -170,45 +251,63 @@ impl Widget for &mut MapWidget {
 
         // The map was dragged so update the center position
         if response.dragged() {
-            self.relative_position -= response.drag_delta();
+            self.relative_offset -= response.drag_delta();
 
-            if self.relative_position.y < -corrected_tile_size {
+            let half_tile_size = corrected_tile_size / 2.0;
+
+            // TODO: Optimize this by combining it with the next if statements
+            let max_tile_index = self.center_tile.max_tiles() - 1;
+            // let half_tile_size = corrected_tile_size / 2.0;
+            if self.center_tile.x == 0 {
+                self.relative_offset.x = self.relative_offset.x.max(-half_tile_size);
+            }
+            if self.center_tile.x == max_tile_index {
+                self.relative_offset.x = self.relative_offset.x.min(half_tile_size);
+            }
+            if self.center_tile.y == 0 {
+                self.relative_offset.y = self.relative_offset.y.max(-half_tile_size);
+            }
+            if self.center_tile.y == max_tile_index {
+                self.relative_offset.y = self.relative_offset.y.min(half_tile_size);
+            }
+
+            if self.relative_offset.y < -corrected_tile_size {
                 debug!("Moving north");
                 if let Some(new_tile) = self.center_tile.north() {
                     self.center_tile = new_tile;
-                    self.relative_position.y %= corrected_tile_size;
+                    self.relative_offset.y %= corrected_tile_size;
                 } else {
-                    self.relative_position.y = -corrected_tile_size;
+                    self.relative_offset.y = -corrected_tile_size;
                 }
             }
 
-            if self.relative_position.x > corrected_tile_size {
+            if self.relative_offset.x > corrected_tile_size {
                 debug!("Moving east");
                 if let Some(new_tile) = self.center_tile.east() {
                     self.center_tile = new_tile;
-                    self.relative_position.x %= corrected_tile_size;
+                    self.relative_offset.x %= corrected_tile_size;
                 } else {
-                    self.relative_position.x = corrected_tile_size;
+                    self.relative_offset.x = corrected_tile_size;
                 }
             }
 
-            if self.relative_position.y > corrected_tile_size {
+            if self.relative_offset.y > corrected_tile_size {
                 debug!("Moving south");
                 if let Some(new_tile) = self.center_tile.south() {
                     self.center_tile = new_tile;
-                    self.relative_position.y %= corrected_tile_size;
+                    self.relative_offset.y %= corrected_tile_size;
                 } else {
-                    self.relative_position.y = corrected_tile_size;
+                    self.relative_offset.y = corrected_tile_size;
                 }
             }
 
-            if self.relative_position.x < -corrected_tile_size {
+            if self.relative_offset.x < -corrected_tile_size {
                 debug!("Moving west");
                 if let Some(new_tile) = self.center_tile.west() {
                     self.center_tile = new_tile;
-                    self.relative_position.x %= corrected_tile_size;
+                    self.relative_offset.x %= corrected_tile_size;
                 } else {
-                    self.relative_position.x = -corrected_tile_size;
+                    self.relative_offset.x = -corrected_tile_size;
                 }
             }
 
@@ -217,7 +316,7 @@ impl Widget for &mut MapWidget {
         // The map was double clicked so reset the position
         if response.double_clicked() {
             debug!("Resetting map position");
-            self.relative_position = Vec2::new(0.0, 0.0);
+            self.relative_offset = Vec2::new(0.0, 0.0);
             self.zoom = 0.0;
         }
 
@@ -237,14 +336,20 @@ impl Widget for &mut MapWidget {
                 // self.position += Vec2::new(x, y);
 
                 let m = (start_tile.max_tiles() as f32 * corrected_tile_size) / (start_tile.max_tiles() as f32 * new_tile_size);
-                self.relative_position *= m;
+                self.relative_offset *= m;
             }
 
             // Debug info
             ui.add_space(-98.0);
             ui.label(format!("Hovering at {} {}", hover_pos.x, hover_pos.y));
-            ui.label(format!("Position: {:?}", self.relative_position));
+            ui.label(format!("Position: {:?}", self.relative_offset));
             ui.label(format!("Zoom: {}", self.zoom));
+
+            let loc = self.get_center_location();
+
+            ui.label(format!("Current center location: {loc:?}"));
+            ui.label(format!("Relative offset: {:?}", self.relative_offset));
+            ui.label(format!("Corrected tile size: {:?}", corrected_tile_size));
         }
 
         response
@@ -252,8 +357,27 @@ impl Widget for &mut MapWidget {
 }
 impl std::fmt::Debug for MapWidget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MapWidget").field("Position", &self.relative_position).field("Zoom", &self.zoom).finish()
+        f.debug_struct("MapWidget").field("Position", &self.relative_offset).field("Zoom", &self.zoom).finish()
     }
+}
+
+
+/// Calculates the TileId and relative offset for the provided coordinates
+fn calculate_coords_from_tile_and_offset(center_tile: TileId, tile_zoom: f32, offset: Vec2) {
+    
+    // let max_tiles = TileId { zoom: tile_zoom as u8, ..Default::default() }.max_tiles();
+    let max_tiles = center_tile.max_tiles();
+
+    let scale_zoom = (tile_zoom % 1.0) + 1.0;
+    let corrected_tile_size = 256.0 * scale_zoom;
+
+    let center_x_pixels = ((center_tile.x + 1) as f32 * corrected_tile_size) - offset.x;
+    let max_x_pixels = max_tiles as f32 * corrected_tile_size;
+
+    let lat = (360.0 * (center_x_pixels / max_x_pixels)) - 180.0;
+    debug!("Center/Max: {center_x_pixels}/{max_x_pixels}");
+    debug!("Latitude: {lat}");
+
 }
 
 
