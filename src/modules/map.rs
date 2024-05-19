@@ -116,7 +116,7 @@ impl MapWidget {
         // Calculate our pixel position on the world map
         let mut y_pixels = ((map_max_tiles * y_ratio) * tile_size).floor();
         // Calculate the number of tiles in the Y axis
-        let y_tiles = map_max_tiles as u32 - (y_pixels / tile_size) as u32 - 1;
+        let y_tiles = (map_max_tiles as u32 - (y_pixels / tile_size) as u32).saturating_sub(1);
         // y_tiles = map_max_tiles as u32 - y_tiles - 1;
         // Get the remaining pixels and apply an offset of half the tile size
         y_pixels %= tile_size;
@@ -373,26 +373,25 @@ impl Widget for &mut MapWidget {
 
         if let Some(hover_pos) = response.hover_pos() {
 
-            // Get the zoom delta (if any)
+            // Get the zoom delta (how much the user zoomed)
             let zoom_delta = ui.ctx().input(|i| i.zoom_delta());
-
-            let mut loc = self.get_center_location();
-
-            // Zoom in/out
-            self.zoom += (zoom_delta - 1.0) * 0.5;
+            
+            // The user zoomed in/out
             if zoom_delta != 1.0 {
 
-                // let mut loc = self.get_center_location();
+                // Store the current location so we can center on it again later
+                let mut loc = self.get_center_location();
 
-                let new_tile_size = 256.0 * (self.zoom + 1.0);
+                // Add the zoom delta to the zoom value
+                self.zoom += (zoom_delta - 1.0) * 0.5;
+                // Clamp the zoom to the 0-20 tile zoom range
+                self.zoom = self.zoom.clamp(0.0, 20.0);
 
-                let max_tiles = max_tiles(start_tile.zoom as u32);
-                let m = (max_tiles as f32 * corrected_tile_size) / (max_tiles as f32 * new_tile_size);
-                self.relative_offset *= m;
+                // Update the tile zoom level
+                // NOTE: The type conversion to u8 automatically floors the value so we don't have to do it manually
+                self.center_tile.zoom = self.zoom as u8;
 
-                let tile_zoom = (self.zoom / 1.0) as u8;
-                self.center_tile.zoom = tile_zoom;
-
+                // Set the center location again
                 self.set_center_location(loc);
             }
 
