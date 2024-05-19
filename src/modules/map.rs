@@ -99,56 +99,6 @@ impl MapWidget {
 
     }
 
-    // fn set_center_location(&mut self, location: Location) {
-
-    //     // Calculate the tile size
-    //     let tile_size = {
-    //         // Calculate the scaling value
-    //         let scale_zoom = (self.zoom % 1.0) + 1.0;
-    //         256.0 * scale_zoom as f64
-    //     };
-
-    //     // Get the width of the entire world map at our current zoom level in tiles
-    //     let map_max_tiles = self.center_tile.max_tiles() as f64;
-
-    //     // ===== LATITUDE ===== //
-    //     // Calculate our latitude ratio in the world map
-    //     // let x_ratio = (location.latitude() + 180.0) / 360.0;
-    //     let x_ratio = (location.latitude() + 85.051_13) / 170.102_26;
-    //     // Calculate our pixel position on the world map
-    //     let mut x_pixels = ((map_max_tiles * x_ratio) * tile_size).floor();
-    //     // Calculate, divide, and floor the number of X tiles
-    //     let mut x_tiles = (x_pixels / tile_size) as u32;
-    //     x_tiles = map_max_tiles as u32 - x_tiles - 1;
-    //     // Now that we calculated the number of X tiles, calculate the remainder and apply an offset of half the tile size
-    //     x_pixels %= tile_size;
-    //     x_pixels -= tile_size * 0.5;
-
-    //     // ===== LONGITUDE ===== //
-    //     // Calculate our longitude ratio in the world map
-    //     // let y_ratio = (location.longitude() + 85.051_13) / 170.102_26;
-    //     let y_ratio = (location.longitude() + 180.0) / 360.0;
-    //     // Calculate our pixel position on the world map
-    //     let mut y_pixels = ((map_max_tiles * y_ratio) * tile_size).floor();
-    //     // Calculate, divide, and floor the number of Y tiles
-    //     let mut y_tiles = (y_pixels / tile_size) as u32;
-    //     // The Y tiles number was inverted and I am too tired to keep troubleshooting so here's a workaround
-    //     // y_tiles = map_max_tiles as u32 - y_tiles - 1;
-    //     // Now that we calculated the number of Y tiles, calculate the remainer and apply an offset of half the tile size
-    //     y_pixels %= tile_size;
-    //     y_pixels -= tile_size * 0.5;
-
-    //     // debug!("X tile: {}", y_tiles);
-    //     // debug!("Y tile: {}", x_tiles);
-
-    //     // Update the map position
-    //     self.center_tile.x = y_tiles;
-    //     self.center_tile.y = x_tiles;
-    //     self.relative_offset.x = y_pixels as f32;
-    //     self.relative_offset.y = -x_pixels as f32;
-
-    // }
-
     /// Sets the map center to the provided location
     fn set_center_location(&mut self, location: Location) {
 
@@ -184,7 +134,7 @@ impl MapWidget {
         // Get the remaining pixels and apply an offset of half the tile size
         x_pixels %= tile_size;
         x_pixels -= tile_size * 0.5;
-        
+
         // Update the map position
         self.center_tile.x = x_tiles;
         self.center_tile.y = y_tiles;
@@ -476,25 +426,6 @@ impl std::fmt::Debug for MapWidget {
 }
 
 
-/// Calculates the TileId and relative offset for the provided coordinates
-fn calculate_coords_from_tile_and_offset(center_tile: TileId, tile_zoom: f32, offset: Vec2) {
-    
-    // let max_tiles = TileId { zoom: tile_zoom as u8, ..Default::default() }.max_tiles();
-    let max_tiles = center_tile.max_tiles();
-
-    let scale_zoom = (tile_zoom % 1.0) + 1.0;
-    let corrected_tile_size = 256.0 * scale_zoom;
-
-    let center_x_pixels = ((center_tile.x + 1) as f32 * corrected_tile_size) - offset.x;
-    let max_x_pixels = max_tiles as f32 * corrected_tile_size;
-
-    let lat = (360.0 * (center_x_pixels / max_x_pixels)) - 180.0;
-    debug!("Center/Max: {center_x_pixels}/{max_x_pixels}");
-    debug!("Latitude: {lat}");
-
-}
-
-
 /// Breadth flood fill tiling algorithm.
 /// 
 /// Given a starting tile and a rect that resembles the visible area (i.e. the map),
@@ -602,7 +533,7 @@ impl TileManager {
 }
 
 /// The ID of a map tile
-#[derive(Debug, PartialEq, Clone, Copy, Eq, Hash)]
+#[derive(Debug, Default, PartialEq, Clone, Copy, Eq, Hash)]
 struct TileId {
     x: u32,
     y: u32,
@@ -677,13 +608,4 @@ impl TileId {
         s.is_in_range().then_some(s)
     }
 
-}
-impl Default for TileId {
-    fn default() -> Self {
-        Self {
-            x: Default::default(),
-            y: Default::default(),
-            zoom: 6
-        }
-    }
 }
