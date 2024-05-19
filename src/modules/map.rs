@@ -36,8 +36,6 @@ pub struct MapWidget {
     zoom: f32,
     /// The tilemanager system is responsible for caching and fetching any tiles that the map widget requires
     tile_manager: TileManager,
-    /// Where the map is centered at
-    center: MapLocation,
     texture_handle: Option<egui::TextureHandle>
 }
 impl MapWidget {
@@ -59,18 +57,18 @@ impl MapWidget {
         let tile_size = {
             // Calculate the scaling value
             let scale_zoom = (self.zoom % 1.0) + 1.0;
-            256.0 * scale_zoom
+            256.0 * scale_zoom as f64
         };
 
         // Get the width of the entire world map
-        let map_size = tile_size * self.center_tile.max_tiles() as f32;
+        let map_size = tile_size * max_tiles(self.center_tile.zoom as u32) as f64;
 
         // Calculate the longitude
         let longitude = {
             // Get the tile size by dividing the offset by the tile size
-            let mut center_x_pixels = self.relative_offset.x / tile_size;
+            let mut center_x_pixels = self.relative_offset.x as f64 / tile_size;
             // Add the tile X coordinate
-            center_x_pixels += (self.center_tile.x + 1) as f32;
+            center_x_pixels += (self.center_tile.x + 1) as f64;
             // Multiply by the tile size to get the total number of pixels in context of the world map
             center_x_pixels *= tile_size;
             // Subtract half of the tile size to compensate for some center tile offset trickery
@@ -83,16 +81,16 @@ impl MapWidget {
         // Calculate the latitude
         let latitude = {
             // Get the tile size by dividing the offset by the tile size
-            let mut center_y_pixels = self.relative_offset.y / tile_size;
+            let mut center_y_pixels = self.relative_offset.y as f64 / tile_size;
             // Add the tile Y coordinate
-            center_y_pixels += (self.center_tile.y + 1) as f32;
+            center_y_pixels += (self.center_tile.y + 1) as f64;
             // Multiply by the tile size to get the total number of pixels in context of the world map
             center_y_pixels *= tile_size;
             // Subtract half of the tile size to compensate for some center tile offset trickery
             center_y_pixels -= tile_size / 2.0;
 
             // Calculate the latitude
-            -((170.102_26 * (center_y_pixels / map_size)) - 85.051_13)
+            -((170.102258 * (center_y_pixels / map_size)) - 85.051129)
         };
 
         Location::new(latitude, longitude)
@@ -110,11 +108,11 @@ impl MapWidget {
         };
 
         // Get the width of the entire world map at our current zoom level in tiles
-        let map_max_tiles = self.center_tile.max_tiles() as f64;
+        let map_max_tiles = max_tiles(self.center_tile.zoom as u32) as f64;
 
         // ===== LATITUDE ===== //
         // Calculate the ratio of our latitude in the world map
-        let y_ratio = (location.latitude() + 85.051_13) / 170.102_26;
+        let y_ratio = (location.latitude() + 85.051129) / 170.102258;
         // Calculate our pixel position on the world map
         let mut y_pixels = ((map_max_tiles * y_ratio) * tile_size).floor();
         // Calculate the number of tiles in the Y axis
@@ -149,16 +147,9 @@ impl Widget for &mut MapWidget {
 
         let _span = tracy_client::span!("Render load texture button");
         // Test load texture button
-        if ui.button("Load texture").clicked() {
-            // self.load_texture(ui.ctx());
-            // let location = Location::new(0.0, 0.0);
-            // calculate_coords_from_tile_and_offset(self.center_tile, self.zoom, self.relative_offset);
-
+        if ui.button("Map test button").clicked() {
             let mut loc = self.get_center_location();
-            // // loc = Location::new(loc.latitude() + 20.0, loc.longitude());
             self.set_center_location(loc);
-
-            // self.set_center_location(Location::new(85.0, 180.0));
         }
         drop(_span);
 
@@ -169,9 +160,9 @@ impl Widget for &mut MapWidget {
         // Allocate a painter that only clips anything outside the map rect
         let map_painter = ui.painter_at(map_rect);
 
-        let tile_zoom = (self.zoom / 1.0) as u8;
+        // let tile_zoom = (self.zoom / 1.0) as u8;
         let scale_zoom = (self.zoom % 1.0) + 1.0;
-        self.center_tile.zoom = tile_zoom;
+        // self.center_tile.zoom = tile_zoom;
         let corrected_tile_size = 256.0 * scale_zoom;
 
         // // Get the tile coordinates of the center tile. This serves as our starting point.
@@ -278,8 +269,8 @@ impl Widget for &mut MapWidget {
 
             let half_tile_size = corrected_tile_size / 2.0;
 
+            // Move north
             if self.relative_offset.y < -half_tile_size {
-                debug!("Moving north");
                 if let Some(new_tile) = self.center_tile.north() {
                     self.center_tile = new_tile;
                     self.relative_offset.y = half_tile_size;
@@ -287,8 +278,8 @@ impl Widget for &mut MapWidget {
                     self.relative_offset.y = -half_tile_size;
                 }
             }
+            // Move east
             if self.relative_offset.x > half_tile_size {
-                debug!("Moving east");
                 if let Some(new_tile) = self.center_tile.east() {
                     self.center_tile = new_tile;
                     self.relative_offset.x = -half_tile_size;
@@ -296,8 +287,8 @@ impl Widget for &mut MapWidget {
                     self.relative_offset.x = half_tile_size;
                 }
             }
+            // Move south
             if self.relative_offset.y > half_tile_size {
-                debug!("Moving south");
                 if let Some(new_tile) = self.center_tile.south() {
                     self.center_tile = new_tile;
                     self.relative_offset.y = -half_tile_size;
@@ -305,8 +296,8 @@ impl Widget for &mut MapWidget {
                     self.relative_offset.y = half_tile_size;
                 }
             }
+            // Move west
             if self.relative_offset.x < -half_tile_size {
-                debug!("Moving west");
                 if let Some(new_tile) = self.center_tile.west() {
                     self.center_tile = new_tile;
                     self.relative_offset.x = half_tile_size;
@@ -375,9 +366,9 @@ impl Widget for &mut MapWidget {
 
         // The map was double clicked so reset the position
         if response.double_clicked() {
-            debug!("Resetting map position");
+            debug!("Resetting tile offset");
             self.relative_offset = Vec2::new(0.0, 0.0);
-            self.zoom = 0.0;
+            // self.zoom = 0.0;
         }
 
         if let Some(hover_pos) = response.hover_pos() {
@@ -385,7 +376,7 @@ impl Widget for &mut MapWidget {
             // Get the zoom delta (if any)
             let zoom_delta = ui.ctx().input(|i| i.zoom_delta());
 
-            // let mut loc = self.get_center_location();
+            let mut loc = self.get_center_location();
 
             // Zoom in/out
             self.zoom += (zoom_delta - 1.0) * 0.5;
@@ -395,23 +386,24 @@ impl Widget for &mut MapWidget {
 
                 let new_tile_size = 256.0 * (self.zoom + 1.0);
 
-                let m = (start_tile.max_tiles() as f32 * corrected_tile_size) / (start_tile.max_tiles() as f32 * new_tile_size);
+                let max_tiles = max_tiles(start_tile.zoom as u32);
+                let m = (max_tiles as f32 * corrected_tile_size) / (max_tiles as f32 * new_tile_size);
                 self.relative_offset *= m;
 
-                // let tile_zoom = (self.zoom / 1.0) as u8;
-                // self.center_tile.zoom = tile_zoom;
+                let tile_zoom = (self.zoom / 1.0) as u8;
+                self.center_tile.zoom = tile_zoom;
 
-                // self.set_center_location(loc);
+                self.set_center_location(loc);
             }
 
             // Debug info
             ui.add_space(-98.0);
             ui.label(format!("Hovering at {} {}", hover_pos.x, hover_pos.y));
             ui.label(format!("Position: {:?}", self.relative_offset));
-            ui.label(format!("Zoom: {}", self.zoom));
 
             let loc = self.get_center_location();
             ui.label(format!("Current center location: {loc:?}"));
+            ui.label(format!("Zoom: {}", self.zoom));
             ui.label(format!("Relative offset: {:?}", self.relative_offset));
             ui.label(format!("Corrected tile size: {:?}", corrected_tile_size));
         }
@@ -438,7 +430,7 @@ fn fill_tiles_breadth(
 ) {
 
     // Add the input tile to the tiles hashmap if it's visible
-    if map_rect.intersects(input_tile.1) {
+    if map_rect.intersects(input_tile.1) && input_tile.0.is_in_range() {
         tiles.insert(input_tile.0, input_tile.1);
     } else {
         return;
@@ -532,6 +524,16 @@ impl TileManager {
     }
 }
 
+
+/// Returns the maximum number of tiles in either the X or Y axis on the map at the provided zoom level.
+/// 
+/// NOTE: Because the map is square, the X and Y axis share the same max value, so all you have to do it provide a zoom value.
+fn max_tiles(zoom: u32) -> u32 {
+    let n_tiles = 4_u64.pow(zoom) as f64;
+    n_tiles.sqrt() as u32
+}
+
+
 /// The ID of a map tile
 #[derive(Debug, Default, PartialEq, Clone, Copy, Eq, Hash)]
 struct TileId {
@@ -548,21 +550,12 @@ impl TileId {
         egui::Pos2 { x, y }
     }
 
-    /// Returns the maximum number of tiles in one direction at the current zoom level.
-    /// 
-    /// The map is a square so this value is the same for the X and Y dimension, hence why only one value is returned.
-    fn max_tiles(&self) -> u32 {
-        let n_tiles = 4_u32.pow(self.zoom as u32) as f32;
-        n_tiles.sqrt() as u32
-    }
-
     /// Does this TileID correspond to an actual map tile? (i.e. is this tile in bounds of earth)
     /// 
     /// Returns false if the tile is *outside of the range of the world*
     fn is_in_range(&self) -> bool {
-        // Get the maximum number of tiles in either direction
-        // TODO: This number needs to change with the zoom level
-        let max_tiles = self.max_tiles();
+        // Get the maximum number of tiles in one axis
+        let max_tiles = max_tiles(self.zoom as u32);
 
         // Return false if the tile is outside of the world range
         !(self.x >= max_tiles || self.y >= max_tiles)
