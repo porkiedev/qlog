@@ -192,14 +192,10 @@ impl Widget for &mut MapWidget {
             if tile.0.x == 4 && tile.0.y == 4 {
                 map_painter.rect_filled(tile.1, 0.0, Color32::RED);
             } else {
-                map_painter.rect_filled(tile.1, 0.0, Color32::from_white_alpha(((tile.0.x + tile.0.y) as u8).wrapping_mul(10)));
+                map_painter.rect_filled(tile.1, 0.0, Color32::from_white_alpha(((tile.0.x + tile.0.y + 1) as u8).wrapping_mul(10)));
             }
         }
-
-        // let offset = Vec2::new(corrected_tile_size * 0.5, corrected_tile_size * 0.5);
-        // let c_rect = Rect::from_min_size(map_rect.center() - offset - self.relative_offset, Vec2::new(corrected_tile_size, corrected_tile_size));
-        // map_painter.rect_filled(c_rect, 0.0, Color32::GREEN);
-
+        
         // {
         //     let center_x = (map_center + tile_offset).x;
         //     let max_x = start_tile.max_tiles() as f32 * corrected_tile_size;
@@ -265,6 +261,7 @@ impl Widget for &mut MapWidget {
 
         // The map was dragged so update the center position
         if response.dragged() {
+
             self.relative_offset -= response.drag_delta();
 
             let half_tile_size = corrected_tile_size / 2.0;
@@ -305,62 +302,6 @@ impl Widget for &mut MapWidget {
                     self.relative_offset.x = -half_tile_size;
                 }
             }
-            
-            // // TODO: Optimize this by combining it with the next if statements
-            // let max_tile_index = self.center_tile.max_tiles() - 1;
-            // // let half_tile_size = corrected_tile_size / 2.0;
-            // if self.center_tile.x == 0 {
-            //     self.relative_offset.x = self.relative_offset.x.max(-half_tile_size);
-            // }
-            // if self.center_tile.x == max_tile_index {
-            //     self.relative_offset.x = self.relative_offset.x.min(half_tile_size);
-            // }
-            // if self.center_tile.y == 0 {
-            //     self.relative_offset.y = self.relative_offset.y.max(-half_tile_size);
-            // }
-            // if self.center_tile.y == max_tile_index {
-            //     self.relative_offset.y = self.relative_offset.y.min(half_tile_size);
-            // }
-
-            // if self.relative_offset.y < -corrected_tile_size {
-            //     debug!("Moving north");
-            //     if let Some(new_tile) = self.center_tile.north() {
-            //         self.center_tile = new_tile;
-            //         self.relative_offset.y %= corrected_tile_size;
-            //     } else {
-            //         self.relative_offset.y = -corrected_tile_size;
-            //     }
-            // }
-
-            // if self.relative_offset.x > corrected_tile_size {
-            //     debug!("Moving east");
-            //     if let Some(new_tile) = self.center_tile.east() {
-            //         self.center_tile = new_tile;
-            //         self.relative_offset.x %= corrected_tile_size;
-            //     } else {
-            //         self.relative_offset.x = corrected_tile_size;
-            //     }
-            // }
-
-            // if self.relative_offset.y > corrected_tile_size {
-            //     debug!("Moving south");
-            //     if let Some(new_tile) = self.center_tile.south() {
-            //         self.center_tile = new_tile;
-            //         self.relative_offset.y %= corrected_tile_size;
-            //     } else {
-            //         self.relative_offset.y = corrected_tile_size;
-            //     }
-            // }
-
-            // if self.relative_offset.x < -corrected_tile_size {
-            //     debug!("Moving west");
-            //     if let Some(new_tile) = self.center_tile.west() {
-            //         self.center_tile = new_tile;
-            //         self.relative_offset.x %= corrected_tile_size;
-            //     } else {
-            //         self.relative_offset.x = -corrected_tile_size;
-            //     }
-            // }
 
         }
 
@@ -393,19 +334,21 @@ impl Widget for &mut MapWidget {
 
                 // Set the center location again
                 self.set_center_location(loc);
+
             }
 
-            // Debug info
-            ui.add_space(-98.0);
-            ui.label(format!("Hovering at {} {}", hover_pos.x, hover_pos.y));
-            ui.label(format!("Position: {:?}", self.relative_offset));
-
-            let loc = self.get_center_location();
-            ui.label(format!("Current center location: {loc:?}"));
-            ui.label(format!("Zoom: {}", self.zoom));
-            ui.label(format!("Relative offset: {:?}", self.relative_offset));
-            ui.label(format!("Corrected tile size: {:?}", corrected_tile_size));
         }
+
+        // Debug info
+        let debug_color = Color32::from_rgb(219, 65, 5);
+        let loc = self.get_center_location();
+
+        ui.add_space(-map_rect.height());
+        ui.colored_label(debug_color, format!("Position: {:?}", self.relative_offset));
+        ui.colored_label(debug_color, format!("Current center location: {loc:?}"));
+        ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
+        ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
+        ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
 
         response
     }
