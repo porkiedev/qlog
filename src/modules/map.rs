@@ -4,12 +4,15 @@
 
 use std::{collections::HashMap, ops::Neg};
 
-use egui::{emath::TSTransform, Color32, ColorImage, Mesh, Rect, TextureHandle, Vec2, Widget};
+use egui::{emath::TSTransform, Color32, ColorImage, Context, Mesh, Rect, TextureHandle, Vec2, Widget};
 use geo_types::Point;
 use geoutils::Location;
 use log::{debug, error};
 use rand::Rng;
 use strum::IntoEnumIterator;
+use tokio::runtime::Handle;
+
+use crate::GuiConfig;
 
 
 /// The maximum number of visible tiles. This is used to initialize hashmaps and vecs to improve frame time consistency (this is very overkill, lol)
@@ -28,7 +31,12 @@ impl MapLocation {
 }
 
 
-#[derive(Default)]
+/// A map widget. This aims to be a high-performance zoomable map with support for multiple different tile providers.
+/// 
+/// NOTE: Initialization of the MapWidget is a little unusual. The MapWidget requires access to the [egui::Context] and [tokio::runtime::Handle],
+///       which means it can't be initialized with [Default::default()] like most widgets.
+///       This typically requires you to wrap the map widget into an `Option<Self>` and initialize it as soon as a frame is rendered
+///       so we can get access to the egui context and the tokio runtime.
 pub struct MapWidget {
     center_tile: TileId,
     /// The relative offset for the center tile in pixels
@@ -39,6 +47,18 @@ pub struct MapWidget {
     texture_handle: Option<egui::TextureHandle>
 }
 impl MapWidget {
+    pub fn new(ctx: &egui::Context, config: &mut GuiConfig) -> Self {
+        let tile_manager = TileManager::new(ctx, config.runtime.handle());
+
+        Self {
+            center_tile: Default::default(),
+            relative_offset: Default::default(),
+            zoom: Default::default(),
+            tile_manager,
+            texture_handle: Default::default()
+        }
+    }
+
     fn load_texture(&mut self, ctx: &egui::Context) {
 
         // let pixels: Vec<u8> = vec![255; 256*256*3];
@@ -165,47 +185,63 @@ impl Widget for &mut MapWidget {
         // self.center_tile.zoom = tile_zoom;
         let corrected_tile_size = 256.0 * scale_zoom;
 
-        // // Get the tile coordinates of the center tile. This serves as our starting point.
-        // // From here, we branch out, rendering a tile if it fits within the map rectangle
-        // let map_center = map_rect.center().to_vec2() - map_rect.left_top().to_vec2();
-        // let center_tile_coords = (self.relative_position + map_center) / corrected_tile_size;
-        // let center_tile_coords = center_tile_coords.floor();
-        // let mut center_tile_coords = (center_tile_coords.x as u32, center_tile_coords.y as u32);
-
         // Create the starting (center) tile
-        let start_tile = self.center_tile;
-        // let start_tile_rect = Rect::from_center_size(map_rect.center() - self.relative_offset, Vec2::new(corrected_tile_size, corrected_tile_size));
+        // let start_tile = self.center_tile;
         let offset = Vec2::new(corrected_tile_size * 0.5, corrected_tile_size * 0.5);
-        let start_tile_rect = Rect::from_min_size(map_rect.center() - offset - self.relative_offset, Vec2::new(corrected_tile_size, corrected_tile_size));
+        let center_tile_rect = Rect::from_min_size(map_rect.center() - offset - self.relative_offset, Vec2::new(corrected_tile_size, corrected_tile_size));
 
         // Create a hashmap that will contain the visible tiles and their corresponding rects
         let mut tiles = HashMap::with_capacity(MAX_TILES);
         // Fill the tiles hashmap using the breadth/4-way flood fill algorithm
-        fill_tiles_breadth(ui.ctx(), map_rect, (start_tile, start_tile_rect), &mut tiles);
+        fill_tiles_breadth(ui.ctx(), map_rect, (self.center_tile, center_tile_rect), &mut tiles);
 
         // ui.label(format!("Rendering {} tiles", tiles.len()));
         // ui.label(format!("Center tile: {:?}", start_tile));
         // ui.label(format!("Center coords with offset: {:?}", map_rect.center() - self.relative_position));
         // ui.label(format!("Tile zoom: {tile_zoom} / {scale_zoom}"));
 
-        for tile in tiles {
-            if tile.0.x == 4 && tile.0.y == 4 {
-                map_painter.rect_filled(tile.1, 0.0, Color32::RED);
-            } else {
-                map_painter.rect_filled(tile.1, 0.0, Color32::from_white_alpha(((tile.0.x + tile.0.y + 1) as u8).wrapping_mul(10)));
-            }
-        }
-        
-        // {
-        //     let center_x = (map_center + tile_offset).x;
-        //     let max_x = start_tile.max_tiles() as f32 * corrected_tile_size;
-        //     let max_flattened_lat = 360.0;
-            
-        //     let lat = (360.0 * (center_x / max_x)) - 180.0;
-
-        //     debug!("Center latitude (x) is {lat}\n{center_x}/{max_x}");
-
+        // for tile in tiles {
+        //     if tile.0.x == 4 && tile.0.y == 4 {
+        //         map_painter.rect_filled(tile.1, 0.0, Color32::RED);
+        //     } else {
+        //         map_painter.rect_filled(tile.1, 0.0, Color32::from_white_alpha(((tile.0.x + tile.0.y + 1) as u8).wrapping_mul(10)));
+        //     }
         // }
+
+        for (tile_id, tile_rect) in tiles {
+
+            // Rounds the rect to the nearest pixels, removing the 1px gap between tiles
+            let tile_rect = map_painter.round_rect_to_pixels(tile_rect);
+
+            // map_painter.rect_filled(tile_rect, 0.0, Color32::RED);
+
+            let tile_image = self.tile_manager.get_tile(&tile_id);
+
+            // egui::load::SizedTexture::new(id, size)
+            // let ae = egui::Image::from_texture(tile_image);
+
+            map_painter.image(
+                tile_image,
+                tile_rect,
+                Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+                Color32::WHITE
+            );
+        }
+
+        // ui.ctx().clone();
+        // ui.ctx().load_texture(name, image, options)
+        // map_painter.add(shape)
+
+        // egui::TextureHandle
+        // ui.ctx().load_texture(name, image, options)
+        // Rect::from_min_max(min, max)
+        // egui::Shape::image(
+        //     self.texture_handle.unwrap().id(),
+        //     rect,
+        //     Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+        //     Color32::WHITE
+        // );
+
 
         // let ctx = ui.ctx().clone();
         // ctx.texture_ui(ui);
@@ -312,6 +348,7 @@ impl Widget for &mut MapWidget {
             // self.zoom = 0.0;
         }
 
+        // Hover and Zoom logic
         if let Some(hover_pos) = response.hover_pos() {
 
             // Get the zoom delta (how much the user zoomed)
@@ -451,9 +488,35 @@ enum TileDirection {
 }
 
 
-#[derive(Debug, Default)]
-struct TileManager;
+pub struct TileManager {
+    /// A handle to the egui context. This is used for upload images (tiles) to the GPU
+    ctx: Context,
+    /// A handle to the tokio runtime
+    handle: Handle,
+    /// The 'loading' image used as a placeholder while we're trying to get the tile image
+    loading_texture: TextureHandle
+}
 impl TileManager {
+    fn new(ctx: &Context, handle: &Handle) -> Self {
+
+        // Upload the 'loading' image to the GPU
+        let loading_texture = ctx.load_texture(
+            "TileManager_Loading",
+            egui::ColorImage::example(),
+            egui::TextureOptions::LINEAR
+        );
+
+        Self {
+            ctx: ctx.clone(),
+            handle: handle.clone(),
+            loading_texture
+        }
+    }
+
+    fn get_tile(&self, tile_id: &TileId) -> egui::TextureId {
+        self.loading_texture.id()
+    }
+
     /// Returns the pixels of a tile.
     /// 
     /// NOTE: This is just the image. You are still responsible for allocating this texture, and caching that texture until it's no longer needed.
@@ -463,6 +526,11 @@ impl TileManager {
         ColorImage::from_rgb([256, 256], &pixels)
         // egui::ColorImage::example()
 
+    }
+}
+impl std::fmt::Debug for TileManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TileManager").field("ctx", &self.ctx).finish()
     }
 }
 
