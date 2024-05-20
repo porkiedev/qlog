@@ -2,15 +2,20 @@
 // The map widget. This is intended to be used as a base widget for other things such as pskreporter maps, callsign maps, etc
 //
 
-use std::{collections::HashMap, ops::Neg};
 
+use std::{collections::HashMap, io::Cursor, ops::Neg, time::Instant};
+
+use anyhow::Result;
 use egui::{emath::TSTransform, Color32, ColorImage, Context, Mesh, Rect, TextureHandle, Vec2, Widget};
 use geo_types::Point;
 use geoutils::Location;
+use image::{GenericImageView, ImageDecoder};
 use log::{debug, error};
+use poll_promise::Promise;
 use rand::Rng;
 use strum::IntoEnumIterator;
 use tokio::runtime::Handle;
+use tracy_client::span;
 
 use crate::GuiConfig;
 
@@ -110,7 +115,8 @@ impl MapWidget {
             center_y_pixels -= tile_size / 2.0;
 
             // Calculate the latitude
-            -((170.102258 * (center_y_pixels / map_size)) - 85.051129)
+            // -((170.102258 * (center_y_pixels / map_size)) - 85.051129)
+            -((180.0 * (center_y_pixels / map_size)) - 90.0)
         };
 
         Location::new(latitude, longitude)
@@ -132,7 +138,8 @@ impl MapWidget {
 
         // ===== LATITUDE ===== //
         // Calculate the ratio of our latitude in the world map
-        let y_ratio = (location.latitude() + 85.051129) / 170.102258;
+        // let y_ratio = (location.latitude() + 85.051129) / 170.102258;
+        let y_ratio = (location.latitude() + 90.0) / 180.0;
         // Calculate our pixel position on the world map
         let mut y_pixels = ((map_max_tiles * y_ratio) * tile_size).floor();
         // Calculate the number of tiles in the Y axis
@@ -168,8 +175,10 @@ impl Widget for &mut MapWidget {
         let _span = tracy_client::span!("Render load texture button");
         // Test load texture button
         if ui.button("Map test button").clicked() {
-            let mut loc = self.get_center_location();
+            // let mut loc = self.get_center_location();
+            let loc = Location::new(37.6, -97.4);
             self.set_center_location(loc);
+            // self.tile_manager.spawn_async_test();
         }
         drop(_span);
 
@@ -208,91 +217,41 @@ impl Widget for &mut MapWidget {
         //     }
         // }
 
+        let _span = span!("Iterate through visible tiles");
         for (tile_id, tile_rect) in tiles {
 
-            // Rounds the rect to the nearest pixels, removing the 1px gap between tiles
-            let tile_rect = map_painter.round_rect_to_pixels(tile_rect);
+            // // Rounds the rect to the nearest pixels, removing the 1px gap between tiles
+            // let tile_rect = map_painter.round_rect_to_pixels(tile_rect);
 
             // map_painter.rect_filled(tile_rect, 0.0, Color32::RED);
 
+            let _span = span!("Get tile texture ID");
             let tile_image = self.tile_manager.get_tile(&tile_id);
+            drop(_span);
 
             // egui::load::SizedTexture::new(id, size)
             // let ae = egui::Image::from_texture(tile_image);
 
+            let _span = span!("Paint tile image");
             map_painter.image(
                 tile_image,
                 tile_rect,
                 Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
                 Color32::WHITE
             );
+            drop(_span);
         }
+        drop(_span);
+
+        let _span = span!("Clean cache");
+        self.tile_manager.clean_cache();
+        drop(_span);
 
         // ui.ctx().clone();
         // ui.ctx().load_texture(name, image, options)
         // map_painter.add(shape)
 
-        // egui::TextureHandle
-        // ui.ctx().load_texture(name, image, options)
-        // Rect::from_min_max(min, max)
-        // egui::Shape::image(
-        //     self.texture_handle.unwrap().id(),
-        //     rect,
-        //     Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
-        //     Color32::WHITE
-        // );
-
-
-        // let ctx = ui.ctx().clone();
-        // ctx.texture_ui(ui);
-
-        // for (tile_id, tile_mesh) in &meshes {
-
-        //     // let mesh = Mesh::with_texture(tile_mesh.id());
-        //     // map_painter.add(mesh);
-
-        //     egui::paint_texture_at(
-        //         &map_painter,
-        //         wanted_rect,
-        //         &egui::ImageOptions::default(),
-        //         &egui::load::SizedTexture::from_handle(tile_mesh)
-        //     )
-
-        //     // map_painter.image(
-        //     //     texture_id,
-        //     //     rect,
-        //     //     uv,
-        //     //     tint
-        //     // )
-
-        //     // egui::Image::from_texture(egui::load::SizedTexture::from_handle(tile_mesh)).fit_to_exact_size(egui::vec2(256.0, 256.0)).maintain_aspect_ratio(false)
-        //     // .paint_at(ui, map_rect);
-        // }
-
         // ui.painter().add(egui::Mesh::with_texture(tex_handle.id()));
-
-        // // If the tile is visible, render it
-        // if ui.is_rect_visible(main_rect) {
-        //     if let Some(tex_handle) = &self.texture_handle {
-
-        //         egui::paint_texture_at(
-        //             ui.painter(),
-        //             main_rect,
-        //             &egui::ImageOptions::default(),
-        //             &egui::load::SizedTexture::from_handle(tex_handle)
-        //         )
-
-        //     }
-        // }
-
-        // if let Some(tex_handle) = &self.texture_handle {
-        //     let sized_tex = egui::load::SizedTexture::from_handle(tex_handle);
-        //     // ui.image(sized_tex);
-        //     egui::Image::from_texture(sized_tex)
-        //     .fit_to_exact_size(egui::vec2(128.0, 128.0))
-        //     .maintain_aspect_ratio(false)
-        //     .ui(ui);
-        // }
 
 
         // The map was dragged so update the center position
@@ -376,16 +335,19 @@ impl Widget for &mut MapWidget {
 
         }
 
-        // Debug info
-        let debug_color = Color32::from_rgb(219, 65, 5);
-        let loc = self.get_center_location();
+        // // Debug info
+        // let debug_color = Color32::from_rgb(219, 65, 5);
+        // let loc = self.get_center_location();
 
-        ui.add_space(-map_rect.height());
-        ui.colored_label(debug_color, format!("Position: {:?}", self.relative_offset));
-        ui.colored_label(debug_color, format!("Current center location: {loc:?}"));
-        ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
-        ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
-        ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
+        // // let ctx = ui.ctx().clone();
+        // // ctx.texture_ui(ui);
+
+        // ui.add_space(-map_rect.height());
+        // ui.colored_label(debug_color, format!("Position: {:?}", self.relative_offset));
+        // ui.colored_label(debug_color, format!("Current center location: {loc:?}"));
+        // ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
+        // ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
+        // ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
 
         response
     }
@@ -493,10 +455,14 @@ pub struct TileManager {
     ctx: Context,
     /// A handle to the tokio runtime
     handle: Handle,
+    tasks: HashMap<TileId, Promise<Result<TextureHandle>>>,
     /// The 'loading' image used as a placeholder while we're trying to get the tile image
-    loading_texture: TextureHandle
+    loading_texture: TextureHandle,
+    tile_cache: HashMap<TileId, CachedTexture>
 }
 impl TileManager {
+    const CACHE_LIFETIME: u64 = 5;
+
     fn new(ctx: &Context, handle: &Handle) -> Self {
 
         // Upload the 'loading' image to the GPU
@@ -509,29 +475,114 @@ impl TileManager {
         Self {
             ctx: ctx.clone(),
             handle: handle.clone(),
-            loading_texture
+            tasks: Default::default(),
+            loading_texture,
+            tile_cache: Default::default()
         }
     }
 
-    fn get_tile(&self, tile_id: &TileId) -> egui::TextureId {
-        self.loading_texture.id()
-    }
+    /// Removes all expired tiles in the tile cache. This should be called periodically.
+    fn clean_cache(&mut self) {
 
-    /// Returns the pixels of a tile.
-    /// 
-    /// NOTE: This is just the image. You are still responsible for allocating this texture, and caching that texture until it's no longer needed.
-    fn get_tile_image(&mut self, tile_id: &TileId) -> ColorImage {
+        // Get the current time
+        let now = Instant::now();
 
-        let pixels: Vec<u8> = vec![255; 256*256*3];
-        ColorImage::from_rgb([256, 256], &pixels)
-        // egui::ColorImage::example()
+        // Remove all tiles from the cache that have expired
+        self.tile_cache.retain(|_k, v| now.duration_since(v.last_used).as_secs() < Self::CACHE_LIFETIME);
 
     }
+
+    fn get_tile(&mut self, tile_id: &TileId) -> egui::TextureId {
+
+        // // Clean the cache
+        // // TODO: Is this worth trying to do only once every N frames so we aren't iterating through the entire tile cache for every tile?
+        // self.clean_cache();
+
+        // Get the current instant
+        let now = Instant::now();
+        
+        let _span = span!("Extract finished tasks");
+        // Extract any finished tile load tasks
+        let finished_tasks = self.tasks.extract_if(|k, v| v.poll().is_ready()).map(|(k, v)| (k, v.block_and_take()));
+        drop(_span);
+        let _span = span!("Iterate and insert tiles into cache");
+        for (tile_id, tile_result) in finished_tasks {
+            match tile_result {
+                Ok(handle) => {
+                    self.tile_cache.insert(tile_id, CachedTexture { handle, last_used: now });
+                },
+                Err(err) => error!("Failed to fetch tile: {err}")
+            }
+        }
+        drop(_span);
+
+        let _span = span!("Return result");
+        // The tile already exists in the cache
+        if let Some(cached_tex) = self.tile_cache.get_mut(tile_id) {
+            let _span = span!("Tile exists in cache");
+            cached_tex.last_used = now;
+            cached_tex.handle.id()
+        }
+        // The tile is still loading
+        else if self.tasks.contains_key(tile_id) {
+            let _span = span!("Tile is still loading");
+            self.loading_texture.id()
+        }
+        // The tile is not loading or in the cache
+        else {
+            let _span = span!("Initialize tile load");
+            // Enter the async runtime
+            let _enter_guard = self.handle.enter();
+
+            // Spawn a task to load the tile
+            let promise = Promise::spawn_async(Self::get_tile_image_from_server(self.ctx.clone(), *tile_id));
+            self.tasks.insert(*tile_id, promise);
+
+            self.loading_texture.id()
+        }
+
+    }
+
+    async fn get_tile_image_from_server(ctx: Context, tile_id: TileId) -> Result<TextureHandle> {
+        
+        // Format the request url for our provided tile id
+        let url = format!("https://tile.openstreetmap.org/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
+
+        // Query the tile server
+        let client = reqwest::Client::builder().user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0").build()?;
+        
+        // Query the tile server
+        // TODO: We need to reliably check for authentication failures and other failures
+        let mut response = client.get(url).send().await?.bytes().await?;
+
+        // Decode the image
+        let img = image::codecs::png::PngDecoder::new(Cursor::new(response))?;
+
+        // Read the image pixels into a 256x256x3 byte vector
+        let mut pixel_data = vec![0; img.total_bytes() as usize];
+        img.read_image(&mut pixel_data)?;
+
+        // Upload the tile image to the GPU
+        let tile_texture = ctx.load_texture(
+            format!("TileManager_z{}_x{}_y{}", tile_id.zoom, tile_id.x, tile_id.y),
+            egui::ColorImage::from_rgb([256, 256], &pixel_data),
+            egui::TextureOptions::LINEAR
+        );
+
+        Ok(tile_texture)
+    }
+
 }
 impl std::fmt::Debug for TileManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TileManager").field("ctx", &self.ctx).finish()
     }
+}
+
+
+struct CachedTexture {
+    handle: TextureHandle,
+    last_used: Instant
 }
 
 

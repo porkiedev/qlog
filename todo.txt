@@ -52,3 +52,4 @@ TODOs:
           Perhaps we just need to avoid breaking database changes altogether, though that may be unrealistic
     2. Show the contact duration in the contact table
     3. Optimize the contact table for memory usage by only querying for the visible rows, +/- 50~ rows
+    4. Remove '#![feature(hash_extract_if)]' when extract_if becomes stable

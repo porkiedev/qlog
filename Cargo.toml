@@ -15,6 +15,7 @@ egui_extras = "0.27"
 egui_dock = { version = "0.12", features = ["serde"] }
 eframe = { version = "0.27", features = ["persistence"] }
 tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "time", "sync"] }
+poll-promise = { version = "0.3", features = ["tokio"] }
 
 # data
 surrealdb = { version = "1.4", features = ["kv-rocksdb"] }
@@ -22,6 +23,7 @@ chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 geoutils = "0.5"
 geo-types = "0.7"
+image = "0.25"
 
 # qol
 strum = "0.26"
