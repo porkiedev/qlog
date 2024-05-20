@@ -1,4 +1,5 @@
 #![allow(unused)]
+#![feature(hash_extract_if)]
 
 mod modules;
 
