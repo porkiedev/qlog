@@ -354,7 +354,7 @@ impl FpsCounter {
 /// The GUI config
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
-struct GuiConfig {
+pub struct GuiConfig {
     /// The tokio async runtime
     #[serde(skip)]
     runtime: Runtime,
