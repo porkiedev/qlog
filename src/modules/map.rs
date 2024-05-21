@@ -2,25 +2,19 @@
 // The map widget. This is intended to be used as a base widget for other things such as pskreporter maps, callsign maps, etc
 //
 
-
-use std::{collections::HashMap, io::Cursor, ops::Neg, time::Instant};
-
+use std::{collections::HashMap, io::Cursor, time::Instant};
 use anyhow::Result;
-use egui::{emath::TSTransform, Color32, ColorImage, Context, Mesh, Rect, TextureHandle, TextureId, Ui, Vec2, Widget};
-use geo_types::Point;
+use egui::{Color32, Context, Rect, TextureHandle, TextureId, Ui, Vec2};
 use geoutils::Location;
-use image::{GenericImageView, ImageDecoder};
+use image::ImageDecoder;
 use lazy_static::lazy_static;
 use log::{debug, error};
 use poll_promise::Promise;
-use rand::Rng;
 use reqwest::Response;
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use thiserror::Error;
 use tokio::runtime::Handle;
-use tracy_client::{span, span_location};
-
 use crate::GuiConfig;
 
 
@@ -170,7 +164,7 @@ impl MapWidget {
         }
 
         // Allocate the ract for the entire map and add senses to it
-        let (id, mut map_rect) = ui.allocate_space(ui.available_size());
+        let (id, map_rect) = ui.allocate_space(ui.available_size());
         let response = ui.interact(map_rect, id, egui::Sense::click_and_drag());
 
         // Allocate a painter that only clips anything outside the map rect
@@ -187,7 +181,7 @@ impl MapWidget {
         // Create a hashmap that will contain the visible tiles and their corresponding rects
         let mut tiles = HashMap::with_capacity(MAX_TILES);
         // Find visible tiles using the breadth/4-way flood fill algorithm
-        fill_tiles_breadth(ui.ctx(), map_rect, (self.center_tile, center_tile_rect), &mut tiles);
+        fill_tiles_breadth(map_rect, (self.center_tile, center_tile_rect), &mut tiles);
 
         // Tick the tile manager (i.e. load tiles and cleanup the cache)
         self.tile_manager.tick();
@@ -262,7 +256,7 @@ impl MapWidget {
         }
 
         // Hover and Zoom logic
-        if let Some(hover_pos) = response.hover_pos() {
+        if let Some(_hover_pos) = response.hover_pos() {
 
             // Get the zoom delta (how much the user zoomed)
             let zoom_delta = ui.ctx().input(|i| i.zoom_delta());
@@ -271,7 +265,7 @@ impl MapWidget {
             if zoom_delta != 1.0 {
 
                 // Store the current location so we can center on it again later
-                let mut loc = self.get_center_location();
+                let loc = self.get_center_location();
 
                 // Add the zoom delta to the zoom value
                 self.zoom += (zoom_delta - 1.0) * 0.5;
@@ -318,7 +312,6 @@ impl std::fmt::Debug for MapWidget {
 /// Given a starting tile and a rect that resembles the visible area (i.e. the map),
 /// this function will span out in all directions, storing all visible tiles in the provided `tiles` HashMap.
 fn fill_tiles_breadth(
-    ctx: &egui::Context,
     map_rect: Rect,
     input_tile: (TileId, Rect),
     tiles: &mut HashMap<TileId, Rect>
@@ -447,17 +440,17 @@ impl TileManager {
         let now = Instant::now();
 
         // Remove expired tiles from the cache
-        self.tile_cache.retain(|k, v| {
+        self.tile_cache.retain(|_k, v| {
             match v {
                 // The cached tile has expired
-                CachedTile::Cached { handle, last_used } => now.duration_since(*last_used).as_secs() < Self::CACHE_LIFETIME,
+                CachedTile::Cached { handle: _, last_used } => now.duration_since(*last_used).as_secs() < Self::CACHE_LIFETIME,
                 // The failed tile load cooldown has been met
                 CachedTile::Failed { failed_at } => now.duration_since(*failed_at).as_secs() < Self::RETRY_TIME
             }
         });
 
         // Extract the finished tile load tasks
-        let finished_tasks = self.tasks.extract_if(|k, v| v.poll().is_ready()).map(|(k, v)| (k, v.block_and_take()));
+        let finished_tasks = self.tasks.extract_if(|_k, v| v.poll().is_ready()).map(|(k, v)| (k, v.block_and_take()));
 
         // Iterate through the finished tasks
         for (tile_id, tile_result) in finished_tasks {
@@ -493,7 +486,7 @@ impl TileManager {
                     *last_used = now;
                     handle.id()
                 },
-                CachedTile::Failed { failed_at } => self.loading_texture.id()
+                CachedTile::Failed { failed_at: _ } => self.loading_texture.id()
             }
 
         }
@@ -655,13 +648,6 @@ struct TileId {
     zoom: u8
 }
 impl TileId {
-
-    /// Returns the coordinates of the top-left corner of the tile in pixels
-    fn pixels(&self, tile_size: u32) -> egui::Pos2 {
-        let x = (self.x * tile_size) as f32;
-        let y = (self.y * tile_size) as f32;
-        egui::Pos2 { x, y }
-    }
 
     /// Does this TileID correspond to an actual map tile? (i.e. is this tile in bounds of earth)
     /// 
