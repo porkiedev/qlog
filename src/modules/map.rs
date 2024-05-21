@@ -16,6 +16,7 @@ use poll_promise::Promise;
 use rand::Rng;
 use reqwest::Response;
 use strum::IntoEnumIterator;
+use thiserror::Error;
 use tokio::runtime::Handle;
 use tracy_client::{span, span_location};
 
@@ -412,12 +413,13 @@ pub struct TileManager {
     tasks: HashMap<TileId, Promise<Result<TextureHandle>>>,
     /// The 'loading' image used as a placeholder while we're trying to get the tile image
     loading_texture: TextureHandle,
-    tile_cache: HashMap<TileId, CachedTexture>
+    tile_cache: HashMap<TileId, CachedTile>
 }
 
 
 impl TileManager {
     const CACHE_LIFETIME: u64 = 5;
+    const RETRY_TIME: u64 = 3;
 
     fn new(ctx: &Context, handle: &Handle) -> Self {
 
@@ -446,16 +448,30 @@ impl TileManager {
         let now = Instant::now();
 
         // Remove expired tiles from the cache
-        self.tile_cache.retain(|_k, v| now.duration_since(v.last_used).as_secs() < Self::CACHE_LIFETIME);
+        self.tile_cache.retain(|k, v| {
+            match v {
+                // The cached tile has expired
+                CachedTile::Cached { handle, last_used } => now.duration_since(*last_used).as_secs() < Self::CACHE_LIFETIME,
+                // The failed tile load cooldown has been met
+                CachedTile::Failed { failed_at } => now.duration_since(*failed_at).as_secs() < Self::RETRY_TIME
+            }
+        });
 
-        // Extract any finished tile load tasks
+        // Extract the finished tile load tasks
         let finished_tasks = self.tasks.extract_if(|k, v| v.poll().is_ready()).map(|(k, v)| (k, v.block_and_take()));
+
+        // Iterate through the finished tasks
         for (tile_id, tile_result) in finished_tasks {
             match tile_result {
+                // The tile successfully loaded; put it in the cache
                 Ok(handle) => {
-                    self.tile_cache.insert(tile_id, CachedTexture { handle, last_used: now });
+                    self.tile_cache.insert(tile_id, CachedTile::Cached { handle, last_used: now });
                 },
-                Err(err) => error!("Failed to load tile: {err}")
+                // The tile failed to load; put the fail into the cache. This is done to add a retry cooldown
+                Err(err) => {
+                    error!("Failed to load tile: {err}");
+                    self.tile_cache.insert(tile_id, CachedTile::Failed { failed_at: now });
+                }
             }
         }
 
@@ -466,24 +482,30 @@ impl TileManager {
         // Get the current instant
         let now = Instant::now();
 
-        // The tile already exists in the cache; return its texture id
-        if let Some(cached_tex) = self.tile_cache.get_mut(tile_id) {
+        // The tile exists in the cache; if it was a successful load, return the tile texture, otherwise if we failed to load the tile, return the error texture
+        if let Some(cached_tile) = self.tile_cache.get_mut(tile_id) {
 
-            // Update the last used time to now so the tile texture doesn't expire
-            cached_tex.last_used = now;
-
-            // Return the tile texture
-            cached_tex.handle.id()
+            // If the tile was successfully loaded, update its last used time and return its texture,
+            // otherwise return the texture for the tile load error
+            // We cache failed tiles so we don't slam an API with requests when a tile load fails.
+            // The failed tile will be removed from the cache by Self::tick() once the cooldown timer has ended, at which point you can retry the query.
+            match cached_tile {
+                CachedTile::Cached { handle, last_used } => {
+                    *last_used = now;
+                    handle.id()
+                },
+                CachedTile::Failed { failed_at } => self.loading_texture.id()
+            }
 
         }
-        // The tile is still loading; return the loading tile texture id
+        // The tile is still loading; return the loading texture
         else if self.tasks.contains_key(tile_id) {
 
             // Return the loading texture
             self.loading_texture.id()
 
         }
-        // The tile is not loading or in the cache; add it to the load queue
+        // The tile is not in the cache or loading; add it to the load queue and return the loading texture
         else {
 
             // Enter the async runtime
@@ -502,34 +524,31 @@ impl TileManager {
 
     async fn get_tile_image_from_server(ctx: Context, tile_id: TileId) -> Result<TextureHandle> {
 
-        // Format the request url for our provided tile id
-        let url = format!("https://tile.openstreetmap.org/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
-        // let url = format!("https://basemaps.cartocdn.com/dark_all/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
-
-        // Query the tile server
-        // TODO: We need to reliably check for authentication failures and other failures
-        // let mut response = CLIENT.get(url).send().await?.bytes().await?;
-        // CLIENT.clone().get(url).query(query)
-        // CLIENT.get(url).bearer_auth("ba");
+        // Query the tile server using the provided tile provider
 
         // TODO: Continue + License attribution
-        let provider = TileProvider::MapBox { access_token: "test".into(), style_owner: "mapbox".into(), style: "dark-v11".into() };
+        let provider = TileProvider::OpenStreetMap;
         let response = provider.get_tile(&tile_id).await?;
 
-        debug!("Resp code: {}", response.status());
+        // If the API gave us an error, return it
         if response.status().is_client_error() || response.status().is_server_error() {
-            error!("Received error when querying tile (Z{} X{} Y{}): {}", tile_id.zoom, tile_id.x, tile_id.y, response.status());
+            // Format the error into a tile provider error with the response code and response text
+            let err = Error::TileProvider(response.status(), response.text().await.map_err(Error::Request)?);
+            return Err(err)?;
         }
 
-        let response = response.bytes().await?;
+        let response = response.bytes().await
+            .map_err(Error::Request)?;
 
-        // Decode the image
-        let img = image::codecs::png::PngDecoder::new(Cursor::new(response))?;
+        // Create the image decoder
+        let img = image::codecs::png::PngDecoder::new(Cursor::new(response))
+            .map_err(Error::ImageDecoding)?;
 
-        // Read the image pixels into a 256x256x3 byte vector
+        // Decode and read the image pixels into a 256x256x3 byte vector
         let mut pixel_data = vec![0; img.total_bytes() as usize];
-        img.read_image(&mut pixel_data)?;
-
+        img.read_image(&mut pixel_data)
+            .map_err(Error::ImageDecoding)?;
+        
         // Upload the tile image to the GPU
         let tile_texture = ctx.load_texture(
             format!("TileManager_z{}_x{}_y{}", tile_id.zoom, tile_id.x, tile_id.y),
@@ -548,7 +567,18 @@ impl std::fmt::Debug for TileManager {
 }
 
 
-/// The supported tile providers
+#[derive(Debug, Error)]
+enum Error {
+    #[error("Failed execute request: {0}")]
+    Request(reqwest::Error),
+    #[error("Failed to tile from the tile provider ({0}): {1}")]
+    TileProvider(reqwest::StatusCode, String),
+    #[error("Failed to decode the tile image: {0}")]
+    ImageDecoding(image::ImageError)
+}
+
+
+/// The supported tile providers. These are APIs that can be used to fetch tiles.
 enum TileProvider {
     /// The OpenStreetMap API.
     OpenStreetMap,
@@ -561,7 +591,7 @@ enum TileProvider {
     /// - mapbox/navigation-night-v1
     /// - mapbox/navigation-day-v1
     MapBox { access_token: String, style_owner: String, style: String },
-    /// The Carto API. This is a paid API and requires an API key. Additionally, you must specify a basemap style name.
+    /// The CartoCDN API. You must specify a basemap style name.
     /// This is the style that will be used when querying the API
     /// 
     /// Some basic styles:
@@ -573,22 +603,22 @@ enum TileProvider {
     /// - light_nolabels
     /// - rastertiles/voyager
     /// 
-    Carto { access_token: String, style: String }
+    CartoCDN { access_token: String, style: String }
 }
 impl TileProvider {
     async fn get_tile(&self, tile_id: &TileId) -> Result<Response> {
         let response = match self {
             TileProvider::OpenStreetMap => {
                 let url = format!("https://tile.openstreetmap.org/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
-                CLIENT.get(url).send().await?
+                CLIENT.get(url).send().await.map_err(Error::Request)?
             },
             TileProvider::MapBox { access_token, style_owner, style } => {
                 let url = format!("https://api.mapbox.com/styles/v1/{style_owner}/{style}/tiles/256/{}/{}/{}", tile_id.zoom, tile_id.x, tile_id.y);
-                CLIENT.get(url).query(&[("access_token", &access_token)]).send().await?
+                CLIENT.get(url).query(&[("access_token", &access_token)]).send().await.map_err(Error::Request)?
             },
-            TileProvider::Carto { access_token, style } => {
+            TileProvider::CartoCDN { access_token, style } => {
                 let url = format!("https://basemaps.cartocdn.com/{style}/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
-                CLIENT.get(url).bearer_auth(access_token).send().await?
+                CLIENT.get(url).bearer_auth(access_token).send().await.map_err(Error::Request)?
             }
         };
 
@@ -597,10 +627,16 @@ impl TileProvider {
 }
 
 
-/// Contains a handle to a texture allocated on the GPU along with the instant at which is was last accessed.
-struct CachedTexture {
-    handle: TextureHandle,
-    last_used: Instant
+/// A tile in the tile manager hashmap. This is used to keep track of tiles that are cached or failed to load. 
+enum CachedTile {
+    /// The tile was successfully loaded and is in the cache
+    /// 
+    /// This contains a handle to the texture that was allocated on the GPU along with the instant at which it was last accessed
+    Cached { handle: TextureHandle, last_used: Instant },
+    /// The tile failed to load, but it's in the cache to act as a retry cooldown timer
+    /// 
+    /// This contains the instant at which the load request failed
+    Failed { failed_at: Instant }
 }
 
 
