@@ -49,8 +49,7 @@ pub struct MapWidget {
     relative_offset: Vec2,
     zoom: f32,
     /// The tilemanager system is responsible for caching and fetching any tiles that the map widget requires
-    tile_manager: TileManager,
-    texture_handle: Option<egui::TextureHandle>
+    tile_manager: TileManager
 }
 impl MapWidget {
 
@@ -61,8 +60,7 @@ impl MapWidget {
             center_tile: Default::default(),
             relative_offset: Default::default(),
             zoom: Default::default(),
-            tile_manager,
-            texture_handle: Default::default()
+            tile_manager
         }
     }
 
@@ -198,7 +196,7 @@ impl MapWidget {
         for (tile_id, tile_rect) in tiles {
 
             // Get the texture id of the tile image
-            let tile_tex = self.tile_manager.get_tile(&tile_id);
+            let tile_tex = self.tile_manager.get_tile(&tile_id, &config.map_tile_provider);
 
             // Draw the tile
             map_painter.image(
@@ -478,7 +476,7 @@ impl TileManager {
 
     }
 
-    fn get_tile(&mut self, tile_id: &TileId) -> TextureId {
+    fn get_tile(&mut self, tile_id: &TileId, tile_provider: &TileProvider) -> TextureId {
 
         // Get the current instant
         let now = Instant::now();
@@ -513,7 +511,7 @@ impl TileManager {
             let _enter_guard = self.handle.enter();
 
             // Spawn a task to load the tile
-            let promise = Promise::spawn_async(Self::get_tile_image_from_server(self.ctx.clone(), *tile_id));
+            let promise = Promise::spawn_async(Self::get_tile_image_from_server(self.ctx.clone(), *tile_id, tile_provider.clone()));
             self.tasks.insert(*tile_id, promise);
 
             // Return the loading texture
@@ -523,13 +521,11 @@ impl TileManager {
 
     }
 
-    async fn get_tile_image_from_server(ctx: Context, tile_id: TileId) -> Result<TextureHandle> {
+    async fn get_tile_image_from_server(ctx: Context, tile_id: TileId, tile_provider: TileProvider) -> Result<TextureHandle> {
 
         // Query the tile server using the provided tile provider
-
         // TODO: Continue + License attribution
-        let provider = TileProvider::OpenStreetMap;
-        let response = provider.get_tile(&tile_id).await?;
+        let response = tile_provider.get_tile(&tile_id).await?;
 
         // If the API gave us an error, return it
         if response.status().is_client_error() || response.status().is_server_error() {
@@ -580,7 +576,8 @@ enum Error {
 
 
 /// The supported tile providers. These are APIs that can be used to fetch tiles.
-enum TileProvider {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TileProvider {
     /// The OpenStreetMap API.
     OpenStreetMap,
     /// The MapBox API. This is a paid API and requires an API key. Additionally, you must specify a style owner and style name.
