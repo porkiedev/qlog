@@ -9,7 +9,7 @@ use egui::{widgets, Id, RichText, Ui, Widget, WidgetText};
 use egui_dock::{DockArea, DockState, TabViewer};
 use log::{debug, error, info, trace};
 use serde::{Deserialize, Serialize};
-use modules::{callsign_lookup, database, gui::TabVariant, types};
+use modules::{callsign_lookup, database, gui::TabVariant, map, types};
 use strum::{EnumCount, IntoEnumIterator};
 use tokio::runtime::Runtime;
 use modules::gui::Tab;
@@ -380,7 +380,9 @@ pub struct GuiConfig {
     fps_counter: FpsCounter,
     /// The selected index of the 'add tab' combobox in the top/menu bar
     #[serde(skip)]
-    add_tab_idx: usize
+    add_tab_idx: usize,
+    /// The tile provider used by any map widgets
+    map_tile_provider: map::TileProvider
 }
 impl Default for GuiConfig {
     fn default() -> Self {
@@ -398,7 +400,8 @@ impl Default for GuiConfig {
             notification_read: Default::default(),
             tasks: Default::default(),
             fps_counter: Default::default(),
-            add_tab_idx: Default::default()
+            add_tab_idx: Default::default(),
+            map_tile_provider: map::TileProvider::OpenStreetMap
         }
     }
 }
