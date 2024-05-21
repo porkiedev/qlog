@@ -10,9 +10,11 @@ use egui::{emath::TSTransform, Color32, ColorImage, Context, Mesh, Rect, Texture
 use geo_types::Point;
 use geoutils::Location;
 use image::{GenericImageView, ImageDecoder};
+use lazy_static::lazy_static;
 use log::{debug, error};
 use poll_promise::Promise;
 use rand::Rng;
+use reqwest::Response;
 use strum::IntoEnumIterator;
 use tokio::runtime::Handle;
 use tracy_client::{span, span_location};
@@ -24,15 +26,12 @@ use crate::GuiConfig;
 const MAX_TILES: usize = 128;
 const BLANK_IMAGE_BYTES: &[u8; 564] = include_bytes!("../../blank-255-tile.png");
 
-
-/// A location on the map
-#[derive(Default)]
-struct MapLocation {
-    lat: f64,
-    lon: f64
-}
-impl MapLocation {
-
+const NAME: &str = env!("CARGO_PKG_NAME");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+lazy_static! {
+    // We use a custom useragent to identify our application
+    /// The client used to sent requests to the tile APIs
+    static ref CLIENT: reqwest::Client = reqwest::Client::builder().user_agent(format!("{NAME}/{VERSION} OSS for Amateur Radio Operators")).build().unwrap();
 }
 
 
@@ -415,6 +414,8 @@ pub struct TileManager {
     loading_texture: TextureHandle,
     tile_cache: HashMap<TileId, CachedTexture>
 }
+
+
 impl TileManager {
     const CACHE_LIFETIME: u64 = 5;
 
@@ -506,11 +507,21 @@ impl TileManager {
         // let url = format!("https://basemaps.cartocdn.com/dark_all/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
 
         // Query the tile server
-        let client = reqwest::Client::builder().user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0").build()?;
-
-        // Query the tile server
         // TODO: We need to reliably check for authentication failures and other failures
-        let mut response = client.get(url).send().await?.bytes().await?;
+        // let mut response = CLIENT.get(url).send().await?.bytes().await?;
+        // CLIENT.clone().get(url).query(query)
+        // CLIENT.get(url).bearer_auth("ba");
+
+        // TODO: Continue + License attribution
+        let provider = TileProvider::MapBox { access_token: "test".into(), style_owner: "mapbox".into(), style: "dark-v11".into() };
+        let response = provider.get_tile(&tile_id).await?;
+
+        debug!("Resp code: {}", response.status());
+        if response.status().is_client_error() || response.status().is_server_error() {
+            error!("Received error when querying tile (Z{} X{} Y{}): {}", tile_id.zoom, tile_id.x, tile_id.y, response.status());
+        }
+
+        let response = response.bytes().await?;
 
         // Decode the image
         let img = image::codecs::png::PngDecoder::new(Cursor::new(response))?;
@@ -533,6 +544,55 @@ impl TileManager {
 impl std::fmt::Debug for TileManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TileManager").field("ctx", &self.ctx).finish()
+    }
+}
+
+
+/// The supported tile providers
+enum TileProvider {
+    /// The OpenStreetMap API.
+    OpenStreetMap,
+    /// The MapBox API. This is a paid API and requires an API key. Additionally, you must specify a style owner and style name.
+    /// This is the style that will be used when querying the API.
+    /// 
+    /// Some basic styles (owner/name):
+    /// - mapbox/dark-v11
+    /// - mapbox/light-v11
+    /// - mapbox/navigation-night-v1
+    /// - mapbox/navigation-day-v1
+    MapBox { access_token: String, style_owner: String, style: String },
+    /// The Carto API. This is a paid API and requires an API key. Additionally, you must specify a basemap style name.
+    /// This is the style that will be used when querying the API
+    /// 
+    /// Some basic styles:
+    /// - dark_all
+    /// - dark_only_labels
+    /// - dark_nolabels
+    /// - light_all
+    /// - light_only_labels
+    /// - light_nolabels
+    /// - rastertiles/voyager
+    /// 
+    Carto { access_token: String, style: String }
+}
+impl TileProvider {
+    async fn get_tile(&self, tile_id: &TileId) -> Result<Response> {
+        let response = match self {
+            TileProvider::OpenStreetMap => {
+                let url = format!("https://tile.openstreetmap.org/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
+                CLIENT.get(url).send().await?
+            },
+            TileProvider::MapBox { access_token, style_owner, style } => {
+                let url = format!("https://api.mapbox.com/styles/v1/{style_owner}/{style}/tiles/256/{}/{}/{}", tile_id.zoom, tile_id.x, tile_id.y);
+                CLIENT.get(url).query(&[("access_token", &access_token)]).send().await?
+            },
+            TileProvider::Carto { access_token, style } => {
+                let url = format!("https://basemaps.cartocdn.com/{style}/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
+                CLIENT.get(url).bearer_auth(access_token).send().await?
+            }
+        };
+
+        Ok(response)
     }
 }
 
