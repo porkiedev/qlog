@@ -6,7 +6,7 @@
 use std::{collections::HashMap, io::Cursor, ops::Neg, time::Instant};
 
 use anyhow::Result;
-use egui::{emath::TSTransform, Color32, ColorImage, Context, Mesh, Rect, TextureHandle, TextureId, Vec2, Widget};
+use egui::{emath::TSTransform, Color32, ColorImage, Context, Mesh, Rect, TextureHandle, TextureId, Ui, Vec2, Widget};
 use geo_types::Point;
 use geoutils::Location;
 use image::{GenericImageView, ImageDecoder};
@@ -15,6 +15,7 @@ use log::{debug, error};
 use poll_promise::Promise;
 use rand::Rng;
 use reqwest::Response;
+use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use thiserror::Error;
 use tokio::runtime::Handle;
@@ -157,9 +158,9 @@ impl MapWidget {
         self.relative_offset.y = -y_pixels as f32;
 
     }
-}
-impl Widget for &mut MapWidget {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+
+    /// Render the UI layout. This doesn't implement `egui::Widget` because we also need mutable access to the `GuiConfig`
+    pub fn ui(&mut self, ui: &mut Ui, config: &mut GuiConfig) -> egui::Response {
         let _span = tracy_client::span!("MapWidget::ui()");
 
         // Test load texture button
