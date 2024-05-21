@@ -402,23 +402,27 @@ pub struct TileManager {
     ctx: Context,
     /// A handle to the tokio runtime
     handle: Handle,
+    /// Our pending tile load tasks in the background
     tasks: HashMap<TileId, Promise<Result<TextureHandle>>>,
-    /// The 'loading' image used as a placeholder while we're trying to get the tile image
+    /// The image used as a placeholder while the tile is loading, or if an error occured while loading the tile
     loading_texture: TextureHandle,
+    /// Our cached tiles. These can either be successfully cached tiles or tiles that failed to load.
+    /// 
+    /// NOTE: The reason we cache tiles that failed to load is so we don't query the tile provider API again every frame (i.e. so we rate limit ourselves)
     tile_cache: HashMap<TileId, CachedTile>
 }
-
-
 impl TileManager {
+    /// This is how long a tile is allowed to remain in the cache unused
     const CACHE_LIFETIME: u64 = 5;
+    /// This is how often we should retry loading a tile
     const RETRY_TIME: u64 = 3;
 
     fn new(ctx: &Context, handle: &Handle) -> Self {
 
-        // Upload the 'loading' image to the GPU
+        // Upload the loading/error image to the GPU
         let loading_texture = ctx.load_texture(
             "TileManager_Loading",
-            egui::ColorImage::example(),
+            egui::ColorImage::new([256, 256], Color32::TRANSPARENT),
             egui::TextureOptions::LINEAR
         );
 
