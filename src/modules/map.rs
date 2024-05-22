@@ -42,7 +42,10 @@ pub struct MapWidget {
     relative_offset: Vec2,
     zoom: f32,
     /// The tilemanager system is responsible for caching and fetching any tiles that the map widget requires
-    tile_manager: TileManager
+    tile_manager: TileManager,
+    /// The center of the map. `center_tile` is still used for movement since it's cheaper and simpler, but it isn't very precise,
+    /// so we store the center location here and re-center the map on zoom events.
+    center_loc: Location
 }
 impl MapWidget {
 
@@ -53,7 +56,8 @@ impl MapWidget {
             center_tile: Default::default(),
             relative_offset: Default::default(),
             zoom: Default::default(),
-            tile_manager
+            tile_manager,
+            center_loc: Location::new(0.0, 0.0)
         }
     }
 
@@ -108,6 +112,9 @@ impl MapWidget {
     /// Sets the map center to the provided location
     fn set_center_location(&mut self, location: Location) {
 
+        // Update the center location
+        self.center_loc = location;
+
         // Calculate the tile size
         let tile_size = {
             // Calculate the scaling value
@@ -149,13 +156,6 @@ impl MapWidget {
 
     /// Render the UI layout. This doesn't implement `egui::Widget` because we also need mutable access to the `GuiConfig`
     pub fn ui(&mut self, ui: &mut Ui, config: &mut GuiConfig) -> egui::Response {
-        let _span = tracy_client::span!("MapWidget::ui()");
-
-        // Test load texture button
-        if ui.button("Map test button").clicked() {
-            let loc = Location::new(37.6, -97.4);
-            self.set_center_location(loc);
-        }
 
         // Allocate the ract for the entire map and add senses to it
         let (id, map_rect) = ui.allocate_space(ui.available_size());
@@ -243,6 +243,8 @@ impl MapWidget {
                 }
             }
 
+            self.center_loc = self.get_center_location();
+
         }
 
         // The map was double clicked so reset the position
@@ -261,8 +263,8 @@ impl MapWidget {
             // The user zoomed in/out
             if zoom_delta != 1.0 {
 
-                // Store the current location so we can center on it again later
-                let loc = self.get_center_location();
+                // // Store the current location so we can center on it again later
+                // let loc = self.get_center_location();
 
                 // Add the zoom delta to the zoom value
                 self.zoom += (zoom_delta - 1.0) * 0.5;
@@ -274,7 +276,7 @@ impl MapWidget {
                 self.center_tile.zoom = self.zoom as u8;
 
                 // Set the center location again
-                self.set_center_location(loc);
+                self.set_center_location(self.center_loc);
 
             }
 
