@@ -2,7 +2,7 @@
 // The map widget. This is intended to be used as a base widget for other things such as pskreporter maps, callsign maps, etc
 //
 
-use std::{collections::HashMap, io::Cursor, time::Instant};
+use std::{collections::HashMap, f64::consts::PI, io::Cursor, time::Instant};
 use anyhow::Result;
 use egui::{Color32, Context, Rect, TextureHandle, TextureId, Ui, Vec2};
 use geoutils::Location;
@@ -89,7 +89,7 @@ impl MapWidget {
         let latitude = {
             // Get the tile size by dividing the offset by the tile size
             let mut center_y_pixels = self.relative_offset.y as f64 / tile_size;
-            // Add the tile Y coordinate
+            // Add the tile Y coordinate (+1 to account for the zero-indexing)
             center_y_pixels += (self.center_tile.y + 1) as f64;
             // Multiply by the tile size to get the total number of pixels in context of the world map
             center_y_pixels *= tile_size;
@@ -97,8 +97,8 @@ impl MapWidget {
             center_y_pixels -= tile_size / 2.0;
 
             // Calculate the latitude
-            // -((170.102258 * (center_y_pixels / map_size)) - 85.051129)
-            -((180.0 * (center_y_pixels / map_size)) - 90.0)
+            let y = convert_range(center_y_pixels, [0.0, map_size], [PI, -PI]);
+            gudermannian(y)
         };
 
         Location::new(latitude, longitude)
@@ -119,15 +119,12 @@ impl MapWidget {
         let map_max_tiles = max_tiles(self.center_tile.zoom as u32) as f64;
 
         // ===== LATITUDE ===== //
-        // Calculate the ratio of our latitude in the world map
-        // let y_ratio = (location.latitude() + 85.051129) / 170.102258;
-        let y_ratio = (location.latitude() + 90.0) / 180.0;
-        // Calculate our pixel position on the world map
-        let mut y_pixels = ((map_max_tiles * y_ratio) * tile_size).floor();
+        // Calculate our latitude position in pixels on the world map
+        let y = inverse_gudermannian(location.latitude());
+        let mut y_pixels = convert_range(y, [PI, -PI], [0.0, map_max_tiles * tile_size]);
         // Calculate the number of tiles in the Y axis
-        let y_tiles = (map_max_tiles as u32 - (y_pixels / tile_size) as u32).saturating_sub(1);
-        // y_tiles = map_max_tiles as u32 - y_tiles - 1;
-        // Get the remaining pixels and apply an offset of half the tile size
+        let y_tiles = (y_pixels / tile_size) as u32;
+        // Get the remaining pixels and apply an offsset of half the tile size
         y_pixels %= tile_size;
         y_pixels -= tile_size * 0.5;
 
@@ -146,7 +143,7 @@ impl MapWidget {
         self.center_tile.x = x_tiles;
         self.center_tile.y = y_tiles;
         self.relative_offset.x = x_pixels as f32;
-        self.relative_offset.y = -y_pixels as f32;
+        self.relative_offset.y = y_pixels as f32;
 
     }
 
@@ -156,10 +153,8 @@ impl MapWidget {
 
         // Test load texture button
         if ui.button("Map test button").clicked() {
-            // let mut loc = self.get_center_location();
             let loc = Location::new(37.6, -97.4);
             self.set_center_location(loc);
-            // self.tile_manager.spawn_async_test();
         }
 
         // Allocate the ract for the entire map and add senses to it
@@ -200,6 +195,9 @@ impl MapWidget {
             );
 
         }
+
+        let crosshair_rect = Rect::from_center_size(map_rect.center(), Vec2::new(5.0, 5.0));
+        map_painter.rect_filled(crosshair_rect, 0.0, Color32::RED);
 
         // The map was dragged so update the center position
         if response.dragged() {
@@ -282,16 +280,17 @@ impl MapWidget {
 
         }
 
-        // // Debug info
-        // let debug_color = Color32::from_rgb(219, 65, 5);
-        // let loc = self.get_center_location();
+        // Debug info
+        let debug_color = Color32::from_rgb(219, 65, 5);
+        let loc = self.get_center_location();
 
         // let ctx = ui.ctx().clone();
         // ctx.texture_ui(ui);
 
-        // ui.add_space(-map_rect.height());
+        
+        ui.add_space(-map_rect.height());
         // ui.colored_label(debug_color, format!("Position: {:?}", self.relative_offset));
-        // ui.colored_label(debug_color, format!("Current center location: {loc:?}"));
+        ui.colored_label(debug_color, format!("Current center location: {loc:?}"));
         // ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
         // ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
         // ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
@@ -640,6 +639,25 @@ enum CachedTile {
 fn max_tiles(zoom: u32) -> u32 {
     let n_tiles = 4_u64.pow(zoom) as f64;
     n_tiles.sqrt() as u32
+}
+
+fn convert_range(val: f64, r1: [f64; 2], r2: [f64; 2]) -> f64 {
+    (val - r1[0])
+        * (r2[1] - r2[0])
+        / (r1[1] - r1[0])
+        + r2[0]
+}
+
+// The gudermannian function. Used to convert Y pixels to a Latitude value
+fn gudermannian(value: f64) -> f64 {
+    value.sinh().atan() * (180.0 / PI)
+}
+
+// The inverse gudermannian function. Used to convert a Latitude value into Y pixels
+fn inverse_gudermannian(value: f64) -> f64 {
+    let sign = value.signum();
+    let sin = f64::sin(value * (PI / 180.0) * sign);
+    sign * (f64::ln((1.0 + sin) / (1.0 - sin)) / 2.0)
 }
 
 
