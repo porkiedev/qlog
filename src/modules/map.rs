@@ -247,11 +247,12 @@ impl MapWidget {
 
         }
 
-        // The map was double clicked so reset the position
+        // Reset the map zoom and center when double clicked
         if response.double_clicked() {
-            debug!("Resetting tile offset");
             self.relative_offset = Vec2::new(0.0, 0.0);
-            // self.zoom = 0.0;
+            self.center_tile.zoom = 0;
+            self.zoom = 0.0;
+            self.set_center_location(Location::new(0.0, 0.0));
         }
 
         // Hover and Zoom logic
