@@ -196,56 +196,6 @@ impl MapWidget {
 
         }
 
-        let crosshair_rect = Rect::from_center_size(map_rect.center(), Vec2::new(5.0, 5.0));
-        map_painter.rect_filled(crosshair_rect, 0.0, Color32::RED);
-
-
-        // TODO: License attribution for openstreetmap
-        let mut r = Rect::from_min_size(map_rect.right_bottom(), Vec2::new(144.0, 24.0));
-        r = r.translate(-Vec2::new(144.0, 24.0));
-        // map_painter.rect_filled(
-        //     r,
-        //     0.0,
-        //     Color32::from_black_alpha(64)
-        // );
-
-        // let c = ui.style().visuals.hyperlink_color;
-        // let attribution_rect = map_painter.text(
-        //     map_rect.right_bottom(),
-        //     egui::Align2::RIGHT_BOTTOM,
-        //     "OpenStreetMap",
-        //     egui::FontId::monospace(18.0),
-        //     c
-        // );
-
-
-        // ui.allocate_ui_at_rect(r, |ui| {
-
-        //     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-
-        //         // Add some space to the right of the hyperlink
-        //         ui.add_space(4.0);
-
-        //         // Create the openstreetmap hyperlink (Thanks OSM for being awesome :) )
-        //         ui.hyperlink_to("OpenStreetMap", "https://www.openstreetmap.org");
-
-        //         // Get a rect containing our hyperlink
-        //         let mut r = ui.min_rect().shrink2(Vec2::new(-2.0, 4.0));
-        //         // Shrink the rect a little bit on the right to account for the earlier offset
-        //         r.set_right(r.right() - 4.0);
-
-        //         // Paint a background rect
-        //         map_painter.rect_filled(
-        //             r,
-        //             0.0,
-        //             Color32::from_black_alpha(64)
-        //         );
-
-        //     });
-            
-        // });
-
-
         // The map was dragged so update the center position
         if response.dragged() {
 
@@ -342,6 +292,9 @@ impl MapWidget {
             // ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
             // ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
             // ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
+            
+            let crosshair_rect = Rect::from_center_size(map_rect.center(), Vec2::new(5.0, 5.0));
+            map_painter.rect_filled(crosshair_rect, 0.0, Color32::RED);
 
             // let ctx = ui.ctx().clone();
             // ctx.texture_ui(ui);
