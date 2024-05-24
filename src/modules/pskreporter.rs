@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::{gui::{self, Tab}, map};
+use super::{gui::{self, Tab}, maidenhead, map};
 use anyhow::Result;
 use egui::{emath::TSTransform, Id, Mesh, Rect, Widget};
 use log::debug;
@@ -41,10 +41,10 @@ impl Tab for PSKReporterTab {
         };
 
         if ui.button("Test").clicked() {
-            let fut = test();
-            let resp = config.runtime.block_on(fut);
+            // let fut = test();
+            // let resp = config.runtime.block_on(fut);
+            // debug!("Result: {resp:?}");
 
-            debug!("Result: {resp:?}");
         };
 
         // Show the map widget
@@ -70,8 +70,7 @@ async fn test() -> Result<()> {
     let mut response = reqwest::get(URL).await?
     .text().await?;
 
-    debug!("Raw text:\n
-    {response}");
+    debug!("Raw text:\n{response}");
 
     response.truncate(response.len() - 13);
     let _ = response.drain(..46);

@@ -37,9 +37,11 @@ lazy_static! {
 ///       This typically requires you to wrap the map widget into an `Option<Self>` and initialize it as soon as a frame is rendered
 ///       so we can get access to the egui context and the tokio runtime.
 pub struct MapWidget {
+    /// The tile in the center of the map
     center_tile: TileId,
     /// The relative offset for the center tile in pixels
     relative_offset: Vec2,
+    /// The zoom level of the map
     zoom: f32,
     /// The tilemanager system is responsible for caching and fetching any tiles that the map widget requires
     tile_manager: TileManager,
@@ -49,7 +51,7 @@ pub struct MapWidget {
 }
 impl MapWidget {
 
-    pub fn new(ctx: &egui::Context, config: &mut GuiConfig) -> Self {
+    pub fn new(ctx: &Context, config: &mut GuiConfig) -> Self {
         let tile_manager = TileManager::new(ctx, config.runtime.handle());
 
         Self {
@@ -196,6 +198,9 @@ impl MapWidget {
 
         }
 
+        let mut hm: HashMap<Location, bool> = HashMap::new();
+        // hm.keys().filter(predicate)
+
         // The map was dragged so update the center position
         if response.dragged() {
 
@@ -292,7 +297,7 @@ impl MapWidget {
             // ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
             // ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
             // ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
-            
+
             let crosshair_rect = Rect::from_center_size(map_rect.center(), Vec2::new(5.0, 5.0));
             map_painter.rect_filled(crosshair_rect, 0.0, Color32::RED);
 
