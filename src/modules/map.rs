@@ -5,11 +5,12 @@
 use std::{collections::HashMap, f64::consts::PI, io::Cursor, time::Instant};
 use anyhow::Result;
 use egui::{Color32, Context, Rect, TextureHandle, TextureId, Ui, Vec2};
-use geoutils::Location;
-use image::ImageDecoder;
+use geo::{Contains, Coord};
+use image::{GenericImage, ImageBuffer, ImageDecoder};
 use lazy_static::lazy_static;
 use log::{debug, error};
 use poll_promise::Promise;
+use rand::Rng;
 use reqwest::Response;
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
@@ -45,26 +46,40 @@ pub struct MapWidget {
     zoom: f32,
     /// The tilemanager system is responsible for caching and fetching any tiles that the map widget requires
     tile_manager: TileManager,
+    /// The overlay manager is responsible for lazily computing an overlay for the map. This is used to draw objects on the map with good performance
+    overlay_manager: MapOverlayManager,
     /// The center of the map. `center_tile` is still used for movement since it's cheaper and simpler, but it isn't very precise,
     /// so we store the center location here and re-center the map on zoom events.
-    center_loc: Location
+    center_loc: Coord<f64>,
+    /// Objects that should be drawn on the map
+    objects: Vec<(Coord<f64>, bool)>
 }
 impl MapWidget {
 
     pub fn new(ctx: &Context, config: &mut GuiConfig) -> Self {
         let tile_manager = TileManager::new(ctx, config.runtime.handle());
+        let overlay_manager = MapOverlayManager::new(ctx);
+        let mut objects = Vec::new();
+
+        let mut rng = rand::thread_rng();
+        for _ in 0..2000 {
+            objects.push((geo::coord! { x: rng.gen_range(-100.0..-90.0), y: rng.gen_range(-40.0..-30.0) }, true));
+        }
 
         Self {
             center_tile: Default::default(),
             relative_offset: Default::default(),
             zoom: Default::default(),
             tile_manager,
-            center_loc: Location::new(0.0, 0.0)
+            overlay_manager,
+            center_loc: Coord::zero(),
+            objects
         }
     }
 
     /// Returns the location of the center of the map
-    fn get_center_location(&self) -> Location {
+    fn get_center_location(&self) -> Coord {
+        let _span = tracy_client::span!("get_center_location");
 
         // Calculate the on-screen size of a tile
         let tile_size = {
@@ -107,12 +122,12 @@ impl MapWidget {
             gudermannian(y)
         };
 
-        Location::new(latitude, longitude)
+        geo::coord! { x: longitude, y: latitude }
 
     }
 
     /// Sets the map center to the provided location
-    fn set_center_location(&mut self, location: Location) {
+    fn set_center_location(&mut self, location: Coord) {
 
         // Update the center location
         self.center_loc = location;
@@ -129,7 +144,7 @@ impl MapWidget {
 
         // ===== LATITUDE ===== //
         // Calculate our latitude position in pixels on the world map
-        let y = inverse_gudermannian(location.latitude());
+        let y = inverse_gudermannian(location.y);
         let mut y_pixels = convert_range(y, [PI, -PI], [0.0, map_max_tiles * tile_size]);
         // Calculate the number of tiles in the Y axis
         let y_tiles = (y_pixels / tile_size) as u32;
@@ -139,7 +154,7 @@ impl MapWidget {
 
         // ===== LONGITUDE ===== //
         // Calculate the ratio of our longitude in the world map
-        let x_ratio = (location.longitude() + 180.0) / 360.0;
+        let x_ratio = (location.x + 180.0) / 360.0;
         // Calculate our pixel position on the world map
         let mut x_pixels = ((map_max_tiles * x_ratio) * tile_size).floor();
         // Calculate the number of tiles in the X axis
@@ -154,6 +169,110 @@ impl MapWidget {
         self.relative_offset.x = x_pixels as f32;
         self.relative_offset.y = y_pixels as f32;
 
+    }
+
+    fn get_visible_geo_rect(&self, map_rect: &Rect) -> geo::Rect {
+        let _span = tracy_client::span!("get_visible_geo_rect");
+        // let map_rect = map_rect.translate(-map_rect.left_top().to_vec2());
+
+        // Calculate the on-screen size of a tile
+        let tile_size = {
+            // Calculate the scaling value
+            let scale_zoom = (self.zoom % 1.0) + 1.0;
+            256.0 * scale_zoom as f64
+        };
+
+        // Get the width of the entire world map in pixels at our current tile size
+        let map_size = tile_size * max_tiles(self.center_tile.zoom as u32) as f64;
+
+        let mut min = {
+
+            // Calculate the longitude
+            let longitude = {
+                // Get the tile size by dividing the offset by the tile size
+                let mut center_x_pixels = self.relative_offset.x as f64 / tile_size;
+                // Add the tile X coordinate
+                center_x_pixels += (self.center_tile.x + 1) as f64;
+                // Multiply by the tile size to get the total number of pixels in context of the world map
+                center_x_pixels *= tile_size;
+                // Subtract half of the tile size to compensate for some center tile offset trickery
+                center_x_pixels -= tile_size / 2.0;
+
+                center_x_pixels -= map_rect.width() as f64 / 2.0;
+                
+                // Calculate the longitude
+                (360.0 * (center_x_pixels / map_size)) - 180.0
+            };
+
+            // Calculate the latitude
+            let latitude = {
+                // Get the tile size by dividing the offset by the tile size
+                let mut center_y_pixels = self.relative_offset.y as f64 / tile_size;
+                // Add the tile Y coordinate (+1 to account for the zero-indexing)
+                center_y_pixels += (self.center_tile.y + 1) as f64;
+                // Multiply by the tile size to get the total number of pixels in context of the world map
+                center_y_pixels *= tile_size;
+                // Subtract half of the tile size to compensate for some center tile offset trickery
+                center_y_pixels -= tile_size / 2.0;
+
+                center_y_pixels -= map_rect.height() as f64 / 2.0;
+
+                // Calculate the latitude
+                let y = convert_range(center_y_pixels, [0.0, map_size], [PI, -PI]);
+                gudermannian(y)
+            };
+
+            geo::coord!{ x: longitude, y: latitude}
+        };
+        // min.x = min.x.clamp(-180.0, 180.0);
+        // min.y = min.y.clamp(-90.0, 90.0);
+
+        let mut max = {
+
+            // Calculate the longitude
+            let longitude = {
+                // Get the tile size by dividing the offset by the tile size
+                let mut center_x_pixels = self.relative_offset.x as f64 / tile_size;
+                // Add the tile X coordinate
+                center_x_pixels += (self.center_tile.x + 1) as f64;
+                // Multiply by the tile size to get the total number of pixels in context of the world map
+                center_x_pixels *= tile_size;
+                // Subtract half of the tile size to compensate for some center tile offset trickery
+                center_x_pixels -= tile_size / 2.0;
+
+                center_x_pixels += map_rect.width() as f64 / 2.0;
+                
+                // Calculate the longitude
+                (360.0 * (center_x_pixels / map_size)) - 180.0
+            };
+
+            // Calculate the latitude
+            let latitude = {
+                // Get the tile size by dividing the offset by the tile size
+                let mut center_y_pixels = self.relative_offset.y as f64 / tile_size;
+                // Add the tile Y coordinate (+1 to account for the zero-indexing)
+                center_y_pixels += (self.center_tile.y + 1) as f64;
+                // Multiply by the tile size to get the total number of pixels in context of the world map
+                center_y_pixels *= tile_size;
+                // Subtract half of the tile size to compensate for some center tile offset trickery
+                center_y_pixels -= tile_size / 2.0;
+
+                center_y_pixels += map_rect.height() as f64 / 2.0;
+
+                // Calculate the latitude
+                let y = convert_range(center_y_pixels, [0.0, map_size], [PI, -PI]);
+                gudermannian(y)
+            };
+
+            geo::coord!{ x: longitude, y: latitude}
+        };
+        // max.x = max.x.clamp(-180.0, 180.0);
+        // max.y = max.y.clamp(-90.0, 90.0);
+
+        // let visible_rect = geo::Rect::new(min, max);
+        // debug!("Visible area: {visible_rect:?}");
+
+        geo::Rect::new(min, max)
     }
 
     /// Render the UI layout. This doesn't implement `egui::Widget` because we also need mutable access to the `GuiConfig`
@@ -198,8 +317,73 @@ impl MapWidget {
 
         }
 
-        let mut hm: HashMap<Location, bool> = HashMap::new();
-        // hm.keys().filter(predicate)
+
+        let geo_rect = self.get_visible_geo_rect(&map_rect);
+        
+        // let _span = tracy_client::span!("Create visible points filter");
+        // let visible_points = self.objects.iter().filter(|c| geo_rect.contains(&c.0));
+        // drop(_span);
+
+        // let point_rect = Rect::from_center_size(map_rect.center(), Vec2::new(10.0, 10.0));
+        // let guder_min_y = inverse_gudermannian(geo_rect.min().y);
+        // let guder_max_y = inverse_gudermannian(geo_rect.max().y);
+
+        // let mut shape = egui::epaint::RectShape::new(point_rect, 0.0, Color32::DARK_RED, egui::Stroke::NONE);
+
+        // let _span = tracy_client::span!("Draw points on map");
+        // for point in visible_points {
+
+        //     let min = geo_rect.min();
+        //     let max = geo_rect.max();
+        //     let half_map_rect_width = map_rect.width() as f64 / 2.0;
+        //     let half_map_rect_height = map_rect.height() as f64 / 2.0;
+
+        //     let x = convert_range(point.0.x, [min.x, max.x], [-half_map_rect_width, half_map_rect_width]) as f32;
+        //     let y = convert_range(inverse_gudermannian(point.0.y), [guder_min_y, guder_max_y], [half_map_rect_height, -half_map_rect_height]) as f32;
+
+        //     shape.rect = point_rect.translate(Vec2::new(x, y));
+
+        //     let response = ui.allocate_rect(shape.rect, egui::Sense::hover());;
+        //     if response.hovered() {
+        //         shape.fill = Color32::DARK_GREEN;
+        //     } else {
+        //         shape.fill = Color32::DARK_RED;
+        //     }
+
+        //     // shape.rect = point_rect;
+        //     map_painter.add(shape);
+
+        //     // let point_rect = point_rect.translate(Vec2::new(x, y));
+        //     // map_painter.circle_filled(point_rect.center(), 5.0, Color32::DARK_RED);
+
+        //     // let point_rect = point_rect.translate(Vec2::new(x, y));
+        //     // map_painter.image(
+        //     //     self.tile_manager.loading_texture.id(),
+        //     //     point_rect,
+        //     //     Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+        //     //     Color32::WHITE
+        //     // );
+
+        //     // map_painter.rect_filled(point_rect, 0.0, Color32::DARK_RED);
+        // }
+        // drop(_span);
+
+        // TODO: in-progress; draw map overlay
+        self.overlay_manager.update_overlay(map_rect, geo_rect);
+        // Get the overlay texture ID
+        let overlay_id = self.overlay_manager.get_overlay();
+        // Draw the overlay
+        map_painter.image(
+            overlay_id,
+            map_rect,
+            Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+            Color32::WHITE
+        );
+
+        // if ui.button("Update overlay").clicked() {
+        //     self.overlay_manager.update_overlay(map_rect, geo_rect);
+        // }
+
 
         // The map was dragged so update the center position
         if response.dragged() {
@@ -254,7 +438,7 @@ impl MapWidget {
             self.relative_offset = Vec2::new(0.0, 0.0);
             self.center_tile.zoom = 0;
             self.zoom = 0.0;
-            self.set_center_location(Location::new(0.0, 0.0));
+            self.set_center_location(Coord::zero());
         }
 
         // Hover and Zoom logic
@@ -331,6 +515,121 @@ impl std::fmt::Debug for MapWidget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MapWidget").field("Position", &self.relative_offset).field("Zoom", &self.zoom).finish()
     }
+}
+
+
+/// A struct that manages the map overlay. When given points on the map, this lazily draws the objects onto a transparent overlay, which is later drawn over the map itself.
+/// 
+/// This was created so we don't re-draw every point on the map every frame. This way, the points are only redrawn when the map changes
+struct MapOverlayManager {
+    /// A handle to the egui context. This is used for upload the overlay image to the GPU
+    ctx: Context,
+    /// Objects that should be drawn on the map
+    objects: Vec<(Coord<f64>, bool)>,
+    /// A handle to the overlay image texture
+    overlay: TextureHandle,
+    /// The latest geo rect. This is used as a reference so we know if the map has changed and if we need to redraw the overlay
+    geo_rect: geo::Rect<f64>,
+    cached_color_image: egui::ColorImage
+}
+impl MapOverlayManager {
+
+    fn new(ctx: &Context) -> Self {
+
+        let cached_color_image = egui::ColorImage::new([256, 256], Color32::TRANSPARENT);
+
+        // Upload the loading/error image to the GPU
+        let overlay_texture = ctx.load_texture(
+            "MapOverlayManager_Overlay",
+            cached_color_image.clone(),
+            egui::TextureOptions::LINEAR
+        );
+
+        let mut objects = Vec::with_capacity(2000);
+        let mut rng = rand::thread_rng();
+        for _ in 0..2000 {
+            objects.push((geo::coord! { x: rng.gen_range(-100.0..-90.0), y: rng.gen_range(-40.0..-30.0) }, true));
+        }
+
+        Self {
+            ctx: ctx.clone(),
+            objects,
+            overlay: overlay_texture,
+            geo_rect: geo::Rect::new(Coord::zero(), Coord::zero()),
+            cached_color_image
+        }
+    }
+
+    fn update_overlay(&mut self, map_rect: egui::Rect, geo_rect: geo::Rect<f64> ) {
+        let _span = tracy_client::span!("Update overlay");
+
+        // The geographically visible area hasn't changed; return early since there's no reason to redraw the overlay
+        if self.geo_rect == geo_rect {
+            return;
+        }
+        // The geographically visible area changed; update the geo rect
+        else {
+            self.geo_rect = geo_rect;
+        }
+
+        // Get the width and height of the map rect
+        let width = map_rect.width() as usize;
+        let height = map_rect.height() as usize;
+
+        // Update the image size and resize the pixels vec to contain the number of pixels in our overlay
+        self.cached_color_image.size = [width, height];
+        self.cached_color_image.pixels.resize(width*height, Color32::TRANSPARENT);
+
+        // Reset the image to transparent pixels
+        // This is unsafe but it was the most performant way to reuse the same pixels vec without reallocating memory for a new image
+        unsafe { std::ptr::write_bytes(self.cached_color_image.pixels.as_mut_ptr(), 0, self.cached_color_image.pixels.len()) };
+
+        // Create the overlay image buffer using the cached image pixels
+        // We call unwrap here because the only way this should fail is if the pixel buffer isn't big enough, but we resize it every time, so it's guaranteed to be the right size
+        let mut image_buf: ImageBuffer<image::Rgba<u8>, &mut [u8]> = ImageBuffer::from_raw(width as u32, height as u32, self.cached_color_image.as_raw_mut()).unwrap();
+
+        // let point_rect = Rect::from_center_size(map_rect.center(), Vec2::new(10.0, 10.0));
+        let map_center = map_rect.center() - map_rect.left_top();
+
+        let (geo_min_x, geo_max_x) = (geo_rect.min().x, geo_rect.max().x);
+        let (geo_min_y, geo_max_y) = (inverse_gudermannian(geo_rect.min().y), inverse_gudermannian(geo_rect.max().y));
+
+        let half_map_rect_width = map_rect.width() as f64 / 2.0;
+        let half_map_rect_height = map_rect.height() as f64 / 2.0;
+
+        // Iterate through the visible points
+        for point in self.objects.iter().filter(|c| geo_rect.contains(&c.0)) {
+
+            // Calculate the x and y offset values for the point
+            let x = convert_range(point.0.x, [geo_min_x, geo_max_x], [-half_map_rect_width, half_map_rect_width]) as f32;
+            let y = convert_range(inverse_gudermannian(point.0.y), [geo_min_y, geo_max_y], [half_map_rect_height, -half_map_rect_height]) as f32;
+
+            // Create the point rect
+            let point_rect = imageproc::rect::Rect::at((map_center.x + x) as i32, (map_center.y + y) as i32)
+                .of_size(8, 8);
+
+            // Draw the hollow rect
+            imageproc::drawing::draw_hollow_rect_mut(
+                &mut image_buf,
+                point_rect,
+                image::Rgba([255, 0, 0, 128])
+            );
+
+        }
+        
+        // Update the map overlay with our new image
+        self.overlay.set(
+            self.cached_color_image.clone(),
+            egui::TextureOptions::LINEAR
+        );
+
+        // debug!("Overlay updated: {:?} {:?}", map_rect.size(), image_buf.len());
+    }
+
+    fn get_overlay(&self) -> TextureId {
+        self.overlay.id()
+    }
+
 }
 
 
@@ -677,12 +976,12 @@ fn convert_range(val: f64, r1: [f64; 2], r2: [f64; 2]) -> f64 {
         + r2[0]
 }
 
-// The gudermannian function. Used to convert Y pixels to a Latitude value
+/// The gudermannian function. Used to convert Y pixels to a Latitude value
 fn gudermannian(value: f64) -> f64 {
     value.sinh().atan() * (180.0 / PI)
 }
 
-// The inverse gudermannian function. Used to convert a Latitude value into Y pixels
+/// The inverse gudermannian function. Used to convert a Latitude value into Y pixels
 fn inverse_gudermannian(value: f64) -> f64 {
     let sign = value.signum();
     let sin = f64::sin(value * (PI / 180.0) * sign);
