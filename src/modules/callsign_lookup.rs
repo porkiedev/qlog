@@ -6,12 +6,11 @@ use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
+use geo::Coord;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{runtime::Handle, sync::Mutex};
-use geoutils::Location;
-
 use super::types::{Event, SpawnedFuture};
 
 
@@ -192,7 +191,7 @@ impl ToCallsignInformation for HamDBResponse {
         // Make the grid square all uppercase
         self.grid.make_ascii_uppercase();
 
-        // Convert the latitude and longitude into a Location type
+        // Convert the latitude and longitude into a Coord type
         let location = {
             // Parse the latitude and longitude strings into f64 type
             let lat = self.lat.parse::<f64>().unwrap_or_else(|_err| {
@@ -204,7 +203,7 @@ impl ToCallsignInformation for HamDBResponse {
                 0.0
             });
 
-            Location::new(lat, lon)
+            geo::coord! { x: lon, y: lat }
         };
 
         // Format the address (resisting the urge to use breaking bad as an example address here :D)
@@ -369,7 +368,7 @@ impl ToCallsignInformation for HamQTHResponse {
                 0.0
             });
 
-            Location::new(lat, lon)
+            geo::coord! { x: lon, y: lat }
         };
 
         // The operator's country, then street address country, and then the continent as a fallback value
@@ -472,7 +471,7 @@ pub struct CallsignInformation {
     /// The grid square locator of the station
     pub grid: String,
     /// The location (latitude and longitude) of the station
-    pub location: Location,
+    pub location: Coord,
     /// The country of the operator
     pub country: String,
     /// The street address of the operator

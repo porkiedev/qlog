@@ -2,17 +2,17 @@
 // This file contains functions that convert to/from maidenhead locators (Grid Squares) and longitude/latitude
 //
 
-use geoutils::Location;
+use geo::Coord;
 
 /// Converts a Latitude and Longitude to a 6-character grid square (e.g. "DM79mr");
-pub fn lat_lon_to_grid(location: &Location) -> String {
+pub fn lat_lon_to_grid(location: &Coord) -> String {
 
     // Allocate a string with 6 characters (4 bytes each)
     let mut grid = String::with_capacity(4*6);
 
     // Get the lon and lat of the input location and add an offset to keep the value positive
-    let mut lon = location.longitude() + 180.0;
-    let mut lat = location.latitude() + 90.0;
+    let mut lon = location.x + 180.0;
+    let mut lat = location.y + 90.0;
 
     // 1st character; Longitude with 20 degrees of precision
     let c1 = (lon / 20.0) as u8;
@@ -48,7 +48,7 @@ pub fn lat_lon_to_grid(location: &Location) -> String {
 /// and possibly cause a panic.
 /// 
 /// NOTE: This function only supports up to 6 characters. Anything more will provide invalid results.
-pub fn grid_to_lat_lon(grid: &str) -> Location {
+pub fn grid_to_lat_lon(grid: &str) -> Coord {
 
     // Create the latitude and longitude values
     let mut lat = 0.0;
@@ -119,6 +119,6 @@ pub fn grid_to_lat_lon(grid: &str) -> Location {
     lat -= 90.0;
     lon -= 180.0;
     
-    Location::new(lat, lon)
+    geo::coord! { x: lon, y: lat }
 
 }
