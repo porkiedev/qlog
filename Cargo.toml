@@ -21,9 +21,9 @@ poll-promise = { version = "0.3", features = ["tokio"] }
 surrealdb = { version = "1.4", features = ["kv-rocksdb"] }
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
-geoutils = "0.5"
-geo-types = "0.7"
-image = "0.25"
+geo = "0.28"
+image = { version = "0.25", default-features = false, features = ["png"] }
+imageproc = { version = "0.25", default-features = false }
 
 # qol
 strum = "0.26"
