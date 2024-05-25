@@ -162,6 +162,10 @@ impl MapWidget {
 
     }
 
+    // TODO: Optimize this
+    /// Returns a geographic rect containing the visibile area on the map
+    /// 
+    /// This is useful for point culling the overlay (i.e. only draw the points that are currently visible)
     fn get_visible_geo_rect(&self, map_rect: &Rect) -> geo::Rect {
         let _span = tracy_client::span!("get_visible_geo_rect");
         // let map_rect = map_rect.translate(-map_rect.left_top().to_vec2());
@@ -308,8 +312,6 @@ impl MapWidget {
 
         }
 
-
-        let geo_rect = self.get_visible_geo_rect(&map_rect);
         
         // let response = ui.allocate_rect(shape.rect, egui::Sense::hover());;
         // if response.hovered() {
@@ -319,7 +321,14 @@ impl MapWidget {
         // }
 
         // TODO: in-progress; draw map overlay
+
+        // ui.allocate_rect(rect, sense);
+
+        // Get the geo rect
+        let geo_rect = self.get_visible_geo_rect(&map_rect);
+        // Update the map overlay
         self.overlay_manager.update_overlay(map_rect, geo_rect);
+
         // Draw the map overlay
         map_painter.image(
             self.overlay_manager.get_overlay(),
@@ -536,24 +545,22 @@ impl MapOverlayManager {
         // We call unwrap here because the only way this should fail is if the pixel buffer isn't big enough, but we resize it every time, so it's guaranteed to be the right size
         let mut image_buf: ImageBuffer<image::Rgba<u8>, &mut [u8]> = ImageBuffer::from_raw(width as u32, height as u32, self.cached_color_image.as_raw_mut()).unwrap();
 
-        // let point_rect = Rect::from_center_size(map_rect.center(), Vec2::new(10.0, 10.0));
+        // Get the relative center of the map
         let map_center = map_rect.center() - map_rect.left_top();
 
+        // Get the min and max lon/lat values of the geo rect
         let (geo_min_x, geo_max_x) = (geo_rect.min().x, geo_rect.max().x);
         let (geo_min_y, geo_max_y) = (inverse_gudermannian(geo_rect.min().y), inverse_gudermannian(geo_rect.max().y));
 
-        let half_map_rect_width = map_rect.width() as f64 / 2.0;
-        let half_map_rect_height = map_rect.height() as f64 / 2.0;
-
-        // Iterate through the visible points
+        // Iterate through the visible points (TODO: Try intersects instead of contains)
         for point in self.objects.iter().filter(|c| geo_rect.contains(&c.0)) {
 
-            // Calculate the x and y offset values for the point
-            let x = convert_range(point.0.x, [geo_min_x, geo_max_x], [-half_map_rect_width, half_map_rect_width]) as f32;
-            let y = convert_range(inverse_gudermannian(point.0.y), [geo_min_y, geo_max_y], [half_map_rect_height, -half_map_rect_height]) as f32;
+            // Calculate the x and y coordinates for the point
+            let x = convert_range(point.0.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as f32;
+            let y = convert_range(inverse_gudermannian(point.0.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as f32;
 
             // Create the point rect
-            let point_rect = imageproc::rect::Rect::at((map_center.x + x) as i32, (map_center.y + y) as i32)
+            let point_rect = imageproc::rect::Rect::at((x - 4.0) as i32, (y - 4.0) as i32)
                 .of_size(8, 8);
 
             // Draw the hollow rect
@@ -571,7 +578,6 @@ impl MapOverlayManager {
             egui::TextureOptions::LINEAR
         );
 
-        // debug!("Overlay updated: {:?} {:?}", map_rect.size(), image_buf.len());
     }
 
     fn get_overlay(&self) -> TextureId {
