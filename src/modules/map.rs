@@ -51,20 +51,12 @@ pub struct MapWidget {
     /// The center of the map. `center_tile` is still used for movement since it's cheaper and simpler, but it isn't very precise,
     /// so we store the center location here and re-center the map on zoom events.
     center_loc: Coord<f64>,
-    /// Objects that should be drawn on the map
-    objects: Vec<(Coord<f64>, bool)>
 }
 impl MapWidget {
 
     pub fn new(ctx: &Context, config: &mut GuiConfig) -> Self {
         let tile_manager = TileManager::new(ctx, config.runtime.handle());
         let overlay_manager = MapOverlayManager::new(ctx);
-        let mut objects = Vec::new();
-
-        let mut rng = rand::thread_rng();
-        for _ in 0..2000 {
-            objects.push((geo::coord! { x: rng.gen_range(-100.0..-90.0), y: rng.gen_range(-40.0..-30.0) }, true));
-        }
 
         Self {
             center_tile: Default::default(),
@@ -72,8 +64,7 @@ impl MapWidget {
             zoom: Default::default(),
             tile_manager,
             overlay_manager,
-            center_loc: Coord::zero(),
-            objects
+            center_loc: Coord::zero()
         }
     }
 
@@ -320,61 +311,18 @@ impl MapWidget {
 
         let geo_rect = self.get_visible_geo_rect(&map_rect);
         
-        // let _span = tracy_client::span!("Create visible points filter");
-        // let visible_points = self.objects.iter().filter(|c| geo_rect.contains(&c.0));
-        // drop(_span);
-
-        // let point_rect = Rect::from_center_size(map_rect.center(), Vec2::new(10.0, 10.0));
-        // let guder_min_y = inverse_gudermannian(geo_rect.min().y);
-        // let guder_max_y = inverse_gudermannian(geo_rect.max().y);
-
-        // let mut shape = egui::epaint::RectShape::new(point_rect, 0.0, Color32::DARK_RED, egui::Stroke::NONE);
-
-        // let _span = tracy_client::span!("Draw points on map");
-        // for point in visible_points {
-
-        //     let min = geo_rect.min();
-        //     let max = geo_rect.max();
-        //     let half_map_rect_width = map_rect.width() as f64 / 2.0;
-        //     let half_map_rect_height = map_rect.height() as f64 / 2.0;
-
-        //     let x = convert_range(point.0.x, [min.x, max.x], [-half_map_rect_width, half_map_rect_width]) as f32;
-        //     let y = convert_range(inverse_gudermannian(point.0.y), [guder_min_y, guder_max_y], [half_map_rect_height, -half_map_rect_height]) as f32;
-
-        //     shape.rect = point_rect.translate(Vec2::new(x, y));
-
-        //     let response = ui.allocate_rect(shape.rect, egui::Sense::hover());;
-        //     if response.hovered() {
-        //         shape.fill = Color32::DARK_GREEN;
-        //     } else {
-        //         shape.fill = Color32::DARK_RED;
-        //     }
-
-        //     // shape.rect = point_rect;
-        //     map_painter.add(shape);
-
-        //     // let point_rect = point_rect.translate(Vec2::new(x, y));
-        //     // map_painter.circle_filled(point_rect.center(), 5.0, Color32::DARK_RED);
-
-        //     // let point_rect = point_rect.translate(Vec2::new(x, y));
-        //     // map_painter.image(
-        //     //     self.tile_manager.loading_texture.id(),
-        //     //     point_rect,
-        //     //     Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
-        //     //     Color32::WHITE
-        //     // );
-
-        //     // map_painter.rect_filled(point_rect, 0.0, Color32::DARK_RED);
+        // let response = ui.allocate_rect(shape.rect, egui::Sense::hover());;
+        // if response.hovered() {
+        //     shape.fill = Color32::DARK_GREEN;
+        // } else {
+        //     shape.fill = Color32::DARK_RED;
         // }
-        // drop(_span);
 
         // TODO: in-progress; draw map overlay
         self.overlay_manager.update_overlay(map_rect, geo_rect);
-        // Get the overlay texture ID
-        let overlay_id = self.overlay_manager.get_overlay();
-        // Draw the overlay
+        // Draw the map overlay
         map_painter.image(
-            overlay_id,
+            self.overlay_manager.get_overlay(),
             map_rect,
             Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
             Color32::WHITE
