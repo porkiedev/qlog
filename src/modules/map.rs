@@ -5,7 +5,7 @@
 use std::{collections::HashMap, f64::consts::PI, io::Cursor, time::Instant};
 use anyhow::Result;
 use egui::{Color32, Context, Rect, TextureHandle, TextureId, Ui, Vec2};
-use geo::{Contains, Coord};
+use geo::{Contains, Coord, Intersects};
 use image::{GenericImage, ImageBuffer, ImageDecoder};
 use lazy_static::lazy_static;
 use log::{debug, error};
@@ -17,6 +17,7 @@ use strum::IntoEnumIterator;
 use thiserror::Error;
 use tokio::runtime::Handle;
 use crate::GuiConfig;
+use super::gui::generate_random_id;
 
 
 /// The maximum number of visible tiles. This is used to initialize hashmaps and vecs to improve frame time consistency (this is very overkill, lol)
@@ -38,6 +39,7 @@ lazy_static! {
 ///       This typically requires you to wrap the map widget into an `Option<Self>` and initialize it as soon as a frame is rendered
 ///       so we can get access to the egui context and the tokio runtime.
 pub struct MapWidget {
+    map_rect_id: egui::Id,
     /// The tile in the center of the map
     center_tile: TileId,
     /// The relative offset for the center tile in pixels
@@ -59,6 +61,7 @@ impl MapWidget {
         let overlay_manager = MapOverlayManager::new(ctx);
 
         Self {
+            map_rect_id: generate_random_id(),
             center_tile: Default::default(),
             relative_offset: Default::default(),
             zoom: Default::default(),
@@ -312,17 +315,8 @@ impl MapWidget {
 
         }
 
-        
-        // let response = ui.allocate_rect(shape.rect, egui::Sense::hover());;
-        // if response.hovered() {
-        //     shape.fill = Color32::DARK_GREEN;
-        // } else {
-        //     shape.fill = Color32::DARK_RED;
-        // }
 
         // TODO: in-progress; draw map overlay
-
-        // ui.allocate_rect(rect, sense);
 
         // Get the geo rect
         let geo_rect = self.get_visible_geo_rect(&map_rect);
@@ -336,6 +330,18 @@ impl MapWidget {
             Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
             Color32::WHITE
         );
+
+        // Allocate a response for the map_rect. This allows us to sense for user input
+        let map_response = ui.interact(map_rect, self.map_rect_id, egui::Sense::hover());
+
+        // Display some text when the user hovers over a marker
+        let mut debug_text = String::new();
+        if let Some(mut hover_pos) = map_response.hover_pos() {
+            // Get the first marker (if there is one)
+            if let Some(point) = self.overlay_manager.hovered_objects_iter(geo_rect, map_rect, hover_pos).next() {
+                debug_text.push_str(&format!("Hovering over {:?}", point.0));
+            }
+        }
 
         // if ui.button("Update overlay").clicked() {
         //     self.overlay_manager.update_overlay(map_rect, geo_rect);
@@ -438,6 +444,7 @@ impl MapWidget {
             // ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
             // ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
             // ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
+            ui.colored_label(debug_color, debug_text);
 
             let crosshair_rect = Rect::from_center_size(map_rect.center(), Vec2::new(5.0, 5.0));
             map_painter.rect_filled(crosshair_rect, 0.0, Color32::RED);
@@ -517,7 +524,38 @@ impl MapOverlayManager {
         }
     }
 
-    fn update_overlay(&mut self, map_rect: egui::Rect, geo_rect: geo::Rect<f64> ) {
+    /// When provided with a geo rect, map rect, and a cursor hover position,
+    /// this will return a iterator over the object(s) that the cursor is hovering over.
+    fn hovered_objects_iter(&self, geo_rect: geo::Rect<f64>, map_rect: egui::Rect, mut hover_pos: egui::Pos2) -> impl Iterator<Item=&(Coord, bool)> {
+        
+        // Make the hover pos relative to the map rect instead of the whole window (i.e. 0px/0px is the top left of the map rect)
+        hover_pos -= map_rect.left_top().to_vec2();
+
+        // Get the width and height of the map rect
+        let width = map_rect.width() as usize;
+        let height = map_rect.height() as usize;
+
+        // Get the min and max lon/lat values of the geo rect
+        let (geo_min_x, geo_max_x) = (geo_rect.min().x, geo_rect.max().x);
+        let (geo_min_y, geo_max_y) = (inverse_gudermannian(geo_rect.min().y), inverse_gudermannian(geo_rect.max().y));
+
+        self.objects.iter()
+        .filter(move |c| geo_rect.intersects(&c.0))
+        .filter(move |point| {
+            // Calculate the x and y coordinates for the point
+            let x = convert_range(point.0.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as f32;
+            let y = convert_range(inverse_gudermannian(point.0.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as f32;
+
+            // Create the point rect
+            let point_rect = egui::Rect::from_center_size(egui::Pos2 { x, y }, Vec2 { x: 8.0, y: 8.0 });
+
+            // If the cursor is hovering over the point rect, add it to the vec
+            point_rect.contains(hover_pos)
+        })
+        
+    }
+
+    fn update_overlay(&mut self, map_rect: egui::Rect, geo_rect: geo::Rect<f64>) {
         let _span = tracy_client::span!("Update overlay");
 
         // The geographically visible area hasn't changed; return early since there's no reason to redraw the overlay
@@ -545,15 +583,12 @@ impl MapOverlayManager {
         // We call unwrap here because the only way this should fail is if the pixel buffer isn't big enough, but we resize it every time, so it's guaranteed to be the right size
         let mut image_buf: ImageBuffer<image::Rgba<u8>, &mut [u8]> = ImageBuffer::from_raw(width as u32, height as u32, self.cached_color_image.as_raw_mut()).unwrap();
 
-        // Get the relative center of the map
-        let map_center = map_rect.center() - map_rect.left_top();
-
         // Get the min and max lon/lat values of the geo rect
         let (geo_min_x, geo_max_x) = (geo_rect.min().x, geo_rect.max().x);
         let (geo_min_y, geo_max_y) = (inverse_gudermannian(geo_rect.min().y), inverse_gudermannian(geo_rect.max().y));
 
-        // Iterate through the visible points (TODO: Try intersects instead of contains)
-        for point in self.objects.iter().filter(|c| geo_rect.contains(&c.0)) {
+        // Iterate through the visible points
+        for point in self.objects.iter().filter(|c| geo_rect.intersects(&c.0)) {
 
             // Calculate the x and y coordinates for the point
             let x = convert_range(point.0.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as f32;
