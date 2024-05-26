@@ -339,10 +339,14 @@ impl MapWidget {
         if let Some(mut hover_pos) = map_response.hover_pos() {
             // Get the first marker (if there is one)
             if let Some(point) = self.overlay_manager.hovered_objects_iter(geo_rect, map_rect, hover_pos).next() {
-                debug_text.push_str(&format!("Hovering over {:?}", point.location));
+                debug_text.push_str(&format!("Marker at {:?}", point.location));
+                
+                egui::containers::show_tooltip_at_pointer(ui.ctx(), self.map_rect_id.with("_tooltip"), |ui| {
+                    ui.label(format!("Location: {:.3?}", point.location));
+                });
+
             }
         }
-
 
         // The map was dragged so update the center position
         if response.dragged() {
