@@ -339,7 +339,7 @@ impl MapWidget {
         if let Some(mut hover_pos) = map_response.hover_pos() {
             // Get the first marker (if there is one)
             if let Some(point) = self.overlay_manager.hovered_objects_iter(geo_rect, map_rect, hover_pos).next() {
-                debug_text.push_str(&format!("Hovering over {:?}", point.0));
+                debug_text.push_str(&format!("Hovering over {:?}", point.location));
             }
         }
 
@@ -484,8 +484,8 @@ impl std::fmt::Debug for MapWidget {
 struct MapOverlayManager {
     /// A handle to the egui context. This is used for upload the overlay image to the GPU
     ctx: Context,
-    /// Objects that should be drawn on the map
-    objects: Vec<(Coord<f64>, bool)>,
+    /// Markers that should be drawn on the map
+    markers: Vec<MapMarker>,
     /// A handle to the overlay image texture
     overlay: TextureHandle,
     /// The latest geo rect. This is used as a reference so we know if the map has changed and if we need to redraw the overlay
@@ -505,16 +505,18 @@ impl MapOverlayManager {
             egui::TextureOptions::LINEAR
         );
 
-        let mut objects = Vec::with_capacity(500);
+        let mut markers = Vec::with_capacity(500);
         let mut rng = rand::thread_rng();
         for _ in 0..500 {
             // objects.push((geo::coord! { x: rng.gen_range(-100.0..-90.0), y: rng.gen_range(-40.0..-30.0) }, true));
-            objects.push((geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) }, true));
+            let m = MapMarker { location: geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) } };
+            markers.push(m);
+            // markers.push((geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) }, true));
         }
 
         Self {
             ctx: ctx.clone(),
-            objects,
+            markers,
             overlay: overlay_texture,
             geo_rect: geo::Rect::new(Coord::zero(), Coord::zero()),
             cached_color_image
@@ -522,8 +524,8 @@ impl MapOverlayManager {
     }
 
     /// When provided with a geo rect, map rect, and a cursor hover position,
-    /// this will return a iterator over the object(s) that the cursor is hovering over.
-    fn hovered_objects_iter(&self, geo_rect: geo::Rect<f64>, map_rect: egui::Rect, mut hover_pos: egui::Pos2) -> impl Iterator<Item=&(Coord, bool)> {
+    /// this will return a iterator over the marker(s) that the cursor is hovering over.
+    fn hovered_objects_iter(&self, geo_rect: geo::Rect<f64>, map_rect: egui::Rect, mut hover_pos: egui::Pos2) -> impl Iterator<Item=&MapMarker> {
         
         // Make the hover pos relative to the map rect instead of the whole window (i.e. 0px/0px is the top left of the map rect)
         hover_pos -= map_rect.left_top().to_vec2();
@@ -536,17 +538,17 @@ impl MapOverlayManager {
         let (geo_min_x, geo_max_x) = (geo_rect.min().x, geo_rect.max().x);
         let (geo_min_y, geo_max_y) = (inverse_gudermannian(geo_rect.min().y), inverse_gudermannian(geo_rect.max().y));
 
-        self.objects.iter()
-        .filter(move |c| geo_rect.intersects(&c.0))
-        .filter(move |point| {
-            // Calculate the x and y coordinates for the point
-            let x = convert_range(point.0.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as f32;
-            let y = convert_range(inverse_gudermannian(point.0.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as f32;
+        self.markers.iter()
+        .filter(move |marker| geo_rect.intersects(&marker.location))
+        .filter(move |marker| {
+            // Calculate the x and y coordinates for the marker
+            let x = convert_range(marker.location.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as f32;
+            let y = convert_range(inverse_gudermannian(marker.location.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as f32;
 
-            // Create the point rect
+            // Create the marker rect
             let point_rect = egui::Rect::from_center_size(egui::Pos2 { x, y }, Vec2 { x: 8.0, y: 8.0 });
 
-            // If the cursor is hovering over the point rect, add it to the vec
+            // Check if the cursor is hovering over the marker rect
             point_rect.contains(hover_pos)
         })
         
@@ -584,14 +586,14 @@ impl MapOverlayManager {
         let (geo_min_x, geo_max_x) = (geo_rect.min().x, geo_rect.max().x);
         let (geo_min_y, geo_max_y) = (inverse_gudermannian(geo_rect.min().y), inverse_gudermannian(geo_rect.max().y));
 
-        // Iterate through the visible points
-        for point in self.objects.iter().filter(|c| geo_rect.intersects(&c.0)) {
+        // Iterate through the visible markers
+        for point in self.markers.iter().filter(|c| geo_rect.intersects(&c.location)) {
 
-            // Calculate the x and y coordinates for the point
-            let x = convert_range(point.0.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as f32;
-            let y = convert_range(inverse_gudermannian(point.0.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as f32;
+            // Calculate the x and y coordinates for the marker
+            let x = convert_range(point.location.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as f32;
+            let y = convert_range(inverse_gudermannian(point.location.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as f32;
 
-            // Create the point rect
+            // Create the marker rect
             let point_rect = imageproc::rect::Rect::at((x - 4.0) as i32, (y - 4.0) as i32)
                 .of_size(8, 8);
 
@@ -719,7 +721,6 @@ impl TileManager {
     const CACHE_LIFETIME: u64 = 5;
     /// This is how often we should retry loading a tile
     const RETRY_TIME: u64 = 3;
-
     fn new(ctx: &Context, handle: &Handle) -> Self {
 
         // Upload the loading/error image to the GPU
@@ -855,96 +856,11 @@ impl TileManager {
 
         Ok(tile_texture)
     }
-
 }
 impl std::fmt::Debug for TileManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TileManager").field("ctx", &self.ctx).finish()
     }
-}
-
-
-/// A map error
-#[derive(Debug, Error)]
-enum Error {
-    #[error("Failed execute request: {0}")]
-    Request(reqwest::Error),
-    #[error("Failed to tile from the tile provider ({0}): {1}")]
-    TileProvider(reqwest::StatusCode, String),
-    #[error("Failed to decode the tile image: {0}")]
-    ImageDecoding(image::ImageError)
-}
-
-
-/// The supported tile providers. These are APIs that can be used to fetch tiles.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TileProvider {
-    /// The OpenStreetMap API.
-    OpenStreetMap,
-    /// The MapBox API. This is a paid API and requires an API key. Additionally, you must specify a style owner and style name.
-    /// This is the style that will be used when querying the API.
-    /// 
-    /// Some basic styles (owner/name):
-    /// - mapbox/dark-v11
-    /// - mapbox/light-v11
-    /// - mapbox/navigation-night-v1
-    /// - mapbox/navigation-day-v1
-    MapBox { access_token: String, style_owner: String, style: String },
-    /// The CartoCDN API. You must specify a basemap style name.
-    /// This is the style that will be used when querying the API
-    /// 
-    /// Some basic styles:
-    /// - dark_all
-    /// - dark_only_labels
-    /// - dark_nolabels
-    /// - light_all
-    /// - light_only_labels
-    /// - light_nolabels
-    /// - rastertiles/voyager
-    /// 
-    CartoCDN { access_token: String, style: String }
-}
-impl TileProvider {
-    async fn get_tile(&self, tile_id: &TileId) -> Result<Response> {
-        let response = match self {
-            TileProvider::OpenStreetMap => {
-                let url = format!("https://tile.openstreetmap.org/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
-                CLIENT.get(url).send().await.map_err(Error::Request)?
-            },
-            TileProvider::MapBox { access_token, style_owner, style } => {
-                let url = format!("https://api.mapbox.com/styles/v1/{style_owner}/{style}/tiles/256/{}/{}/{}", tile_id.zoom, tile_id.x, tile_id.y);
-                CLIENT.get(url).query(&[("access_token", &access_token)]).send().await.map_err(Error::Request)?
-            },
-            TileProvider::CartoCDN { access_token, style } => {
-                let url = format!("https://basemaps.cartocdn.com/{style}/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
-                CLIENT.get(url).bearer_auth(access_token).send().await.map_err(Error::Request)?
-            }
-        };
-
-        Ok(response)
-    }
-}
-
-/// The direction of the next Tile
-#[derive(strum_macros::EnumIter)]
-enum TileDirection {
-    North,
-    East,
-    South,
-    West
-}
-
-
-/// A tile in the tile manager hashmap. This is used to keep track of tiles that are cached or failed to load. 
-enum CachedTile {
-    /// The tile was successfully loaded and is in the cache
-    /// 
-    /// This contains a handle to the texture that was allocated on the GPU along with the instant at which it was last accessed
-    Cached { handle: TextureHandle, last_used: Instant },
-    /// The tile failed to load, but it's in the cache to act as a retry cooldown timer
-    /// 
-    /// This contains the instant at which the load request failed
-    Failed { failed_at: Instant }
 }
 
 /// The ID of a map tile
@@ -1014,6 +930,95 @@ impl TileId {
         s.is_in_range().then_some(s)
     }
 
+}
+
+
+/// A map error
+#[derive(Debug, Error)]
+enum Error {
+    #[error("Failed execute request: {0}")]
+    Request(reqwest::Error),
+    #[error("Failed to tile from the tile provider ({0}): {1}")]
+    TileProvider(reqwest::StatusCode, String),
+    #[error("Failed to decode the tile image: {0}")]
+    ImageDecoding(image::ImageError)
+}
+
+/// The supported tile providers. These are APIs that can be used to fetch tiles.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TileProvider {
+    /// The OpenStreetMap API.
+    OpenStreetMap,
+    /// The MapBox API. This is a paid API and requires an API key. Additionally, you must specify a style owner and style name.
+    /// This is the style that will be used when querying the API.
+    /// 
+    /// Some basic styles (owner/name):
+    /// - mapbox/dark-v11
+    /// - mapbox/light-v11
+    /// - mapbox/navigation-night-v1
+    /// - mapbox/navigation-day-v1
+    MapBox { access_token: String, style_owner: String, style: String },
+    /// The CartoCDN API. You must specify a basemap style name.
+    /// This is the style that will be used when querying the API
+    /// 
+    /// Some basic styles:
+    /// - dark_all
+    /// - dark_only_labels
+    /// - dark_nolabels
+    /// - light_all
+    /// - light_only_labels
+    /// - light_nolabels
+    /// - rastertiles/voyager
+    /// 
+    CartoCDN { access_token: String, style: String }
+}
+impl TileProvider {
+    async fn get_tile(&self, tile_id: &TileId) -> Result<Response> {
+        let response = match self {
+            TileProvider::OpenStreetMap => {
+                let url = format!("https://tile.openstreetmap.org/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
+                CLIENT.get(url).send().await.map_err(Error::Request)?
+            },
+            TileProvider::MapBox { access_token, style_owner, style } => {
+                let url = format!("https://api.mapbox.com/styles/v1/{style_owner}/{style}/tiles/256/{}/{}/{}", tile_id.zoom, tile_id.x, tile_id.y);
+                CLIENT.get(url).query(&[("access_token", &access_token)]).send().await.map_err(Error::Request)?
+            },
+            TileProvider::CartoCDN { access_token, style } => {
+                let url = format!("https://basemaps.cartocdn.com/{style}/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
+                CLIENT.get(url).bearer_auth(access_token).send().await.map_err(Error::Request)?
+            }
+        };
+
+        Ok(response)
+    }
+}
+
+/// The direction of the next Tile
+#[derive(strum_macros::EnumIter)]
+enum TileDirection {
+    North,
+    East,
+    South,
+    West
+}
+
+/// A tile in the tile manager hashmap. This is used to keep track of tiles that are cached or failed to load. 
+enum CachedTile {
+    /// The tile was successfully loaded and is in the cache
+    /// 
+    /// This contains a handle to the texture that was allocated on the GPU along with the instant at which it was last accessed
+    Cached { handle: TextureHandle, last_used: Instant },
+    /// The tile failed to load, but it's in the cache to act as a retry cooldown timer
+    /// 
+    /// This contains the instant at which the load request failed
+    Failed { failed_at: Instant }
+}
+
+/// A marker on the map
+#[derive(Debug)]
+pub struct MapMarker {
+    /// The location of this marker
+    location: Coord<f64>
 }
 
 
