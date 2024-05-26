@@ -343,10 +343,6 @@ impl MapWidget {
             }
         }
 
-        // if ui.button("Update overlay").clicked() {
-        //     self.overlay_manager.update_overlay(map_rect, geo_rect);
-        // }
-
 
         // The map was dragged so update the center position
         if response.dragged() {
@@ -509,10 +505,11 @@ impl MapOverlayManager {
             egui::TextureOptions::LINEAR
         );
 
-        let mut objects = Vec::with_capacity(2000);
+        let mut objects = Vec::with_capacity(500);
         let mut rng = rand::thread_rng();
-        for _ in 0..2000 {
-            objects.push((geo::coord! { x: rng.gen_range(-100.0..-90.0), y: rng.gen_range(-40.0..-30.0) }, true));
+        for _ in 0..500 {
+            // objects.push((geo::coord! { x: rng.gen_range(-100.0..-90.0), y: rng.gen_range(-40.0..-30.0) }, true));
+            objects.push((geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) }, true));
         }
 
         Self {
@@ -702,16 +699,7 @@ fn fill_tiles_breadth(
 }
 
 
-/// The direction of the next Tile
-#[derive(strum_macros::EnumIter)]
-enum TileDirection {
-    North,
-    East,
-    South,
-    West
-}
-
-
+/// The TileManager is responsible for querying the tile provider for tiles, caching tiles, and uploading tile textures onto the GPU
 pub struct TileManager {
     /// A handle to the egui context. This is used for upload images (tiles) to the GPU
     ctx: Context,
@@ -876,6 +864,7 @@ impl std::fmt::Debug for TileManager {
 }
 
 
+/// A map error
 #[derive(Debug, Error)]
 enum Error {
     #[error("Failed execute request: {0}")]
@@ -936,6 +925,15 @@ impl TileProvider {
     }
 }
 
+/// The direction of the next Tile
+#[derive(strum_macros::EnumIter)]
+enum TileDirection {
+    North,
+    East,
+    South,
+    West
+}
+
 
 /// A tile in the tile manager hashmap. This is used to keep track of tiles that are cached or failed to load. 
 enum CachedTile {
@@ -949,40 +947,14 @@ enum CachedTile {
     Failed { failed_at: Instant }
 }
 
-
-/// Returns the maximum number of tiles in either the X or Y axis on the map at the provided zoom level.
-/// 
-/// NOTE: Because the map is square, the X and Y axis share the same max value, so all you have to do it provide a zoom value.
-fn max_tiles(zoom: u32) -> u32 {
-    let n_tiles = 4_u64.pow(zoom) as f64;
-    n_tiles.sqrt() as u32
-}
-
-fn convert_range(val: f64, r1: [f64; 2], r2: [f64; 2]) -> f64 {
-    (val - r1[0])
-        * (r2[1] - r2[0])
-        / (r1[1] - r1[0])
-        + r2[0]
-}
-
-/// The gudermannian function. Used to convert Y pixels to a Latitude value
-fn gudermannian(value: f64) -> f64 {
-    value.sinh().atan() * (180.0 / PI)
-}
-
-/// The inverse gudermannian function. Used to convert a Latitude value into Y pixels
-fn inverse_gudermannian(value: f64) -> f64 {
-    let sign = value.signum();
-    let sin = f64::sin(value * (PI / 180.0) * sign);
-    sign * (f64::ln((1.0 + sin) / (1.0 - sin)) / 2.0)
-}
-
-
 /// The ID of a map tile
 #[derive(Debug, Default, PartialEq, Clone, Copy, Eq, Hash)]
 struct TileId {
+    /// The X/Longitude coordinate of the tile
     x: u32,
+    /// The Y/Latitude coordinate of the tile
     y: u32,
+    /// The zoom level of the tile
     zoom: u8
 }
 impl TileId {
@@ -998,6 +970,7 @@ impl TileId {
         !(self.x >= max_tiles || self.y >= max_tiles)
     }
 
+    /// Returns the tile north of self, if it exists
     fn north(&self) -> Option<Self> {
         let s = Self {
             x: self.x,
@@ -1008,6 +981,7 @@ impl TileId {
         s.is_in_range().then_some(s)
     }
 
+    /// Returns the tile east of self, if it exists
     fn east(&self) -> Option<Self> {
         let s = Self {
             x: self.x + 1,
@@ -1018,6 +992,7 @@ impl TileId {
         s.is_in_range().then_some(s)
     }
 
+    /// Returns the tile south of self, if it exists
     fn south(&self) -> Option<Self> {
         let s = Self {
             x: self.x,
@@ -1028,6 +1003,7 @@ impl TileId {
         s.is_in_range().then_some(s)
     }
 
+    /// Returns the tile west of self, if it exists
     fn west(&self) -> Option<Self> {
         let s = Self {
             x: self.x.checked_sub(1)?,
@@ -1038,4 +1014,33 @@ impl TileId {
         s.is_in_range().then_some(s)
     }
 
+}
+
+
+/// Returns the maximum number of tiles in either the X or Y axis on the map at the provided zoom level.
+/// 
+/// NOTE: Because the map is square, the X and Y axis share the same max value, so all you have to do it provide a zoom value.
+fn max_tiles(zoom: u32) -> u32 {
+    let n_tiles = 4_u64.pow(zoom) as f64;
+    n_tiles.sqrt() as u32
+}
+
+/// Converts a value from one range into a different value in another range
+fn convert_range(val: f64, r1: [f64; 2], r2: [f64; 2]) -> f64 {
+    (val - r1[0])
+        * (r2[1] - r2[0])
+        / (r1[1] - r1[0])
+        + r2[0]
+}
+
+/// The gudermannian function. Used to convert Y pixels into a Latitude value
+fn gudermannian(value: f64) -> f64 {
+    value.sinh().atan() * (180.0 / PI)
+}
+
+/// The inverse gudermannian function. Used to convert a Latitude value into Y pixels
+fn inverse_gudermannian(value: f64) -> f64 {
+    let sign = value.signum();
+    let sin = f64::sin(value * (PI / 180.0) * sign);
+    sign * (f64::ln((1.0 + sin) / (1.0 - sin)) / 2.0)
 }
