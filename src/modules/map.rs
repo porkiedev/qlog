@@ -338,13 +338,11 @@ impl MapWidget {
         let mut debug_text = String::new();
         if let Some(mut hover_pos) = map_response.hover_pos() {
             // Get the first marker (if there is one)
-            if let Some(point) = self.overlay_manager.hovered_objects_iter(geo_rect, map_rect, hover_pos).next() {
-                debug_text.push_str(&format!("Marker at {:?}", point.location));
+            if let Some(marker) = self.overlay_manager.hovered_objects_iter(geo_rect, map_rect, hover_pos).next() {
+                debug_text.push_str(&format!("Marker at {:?}", marker.location()));
                 
-                egui::containers::show_tooltip_at_pointer(ui.ctx(), self.map_rect_id.with("_tooltip"), |ui| {
-                    ui.label(format!("Location: {:.3?}", point.location));
-                });
-
+                // Render the marker's tooltip UI
+                egui::containers::show_tooltip_at_pointer(ui.ctx(), self.map_rect_id.with("_tooltip"), |ui| marker.ui(ui));
             }
         }
 
@@ -489,7 +487,7 @@ struct MapOverlayManager {
     /// A handle to the egui context. This is used for upload the overlay image to the GPU
     ctx: Context,
     /// Markers that should be drawn on the map
-    markers: Vec<MapMarker>,
+    markers: Vec<Box<dyn MapMarkerTrait>>,
     /// A handle to the overlay image texture
     overlay: TextureHandle,
     /// The latest geo rect. This is used as a reference so we know if the map has changed and if we need to redraw the overlay
@@ -509,11 +507,11 @@ impl MapOverlayManager {
             egui::TextureOptions::LINEAR
         );
 
-        let mut markers = Vec::with_capacity(500);
+        let mut markers: Vec<Box<dyn MapMarkerTrait>> = Vec::with_capacity(500);
         let mut rng = rand::thread_rng();
         for _ in 0..500 {
             // objects.push((geo::coord! { x: rng.gen_range(-100.0..-90.0), y: rng.gen_range(-40.0..-30.0) }, true));
-            let m = MapMarker { location: geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) } };
+            let m = Box::new(DummyMapMarker { location: geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) } });
             markers.push(m);
             // markers.push((geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) }, true));
         }
@@ -529,7 +527,7 @@ impl MapOverlayManager {
 
     /// When provided with a geo rect, map rect, and a cursor hover position,
     /// this will return a iterator over the marker(s) that the cursor is hovering over.
-    fn hovered_objects_iter(&self, geo_rect: geo::Rect<f64>, map_rect: egui::Rect, mut hover_pos: egui::Pos2) -> impl Iterator<Item=&MapMarker> {
+    fn hovered_objects_iter(&mut self, geo_rect: geo::Rect<f64>, map_rect: egui::Rect, mut hover_pos: egui::Pos2) -> impl Iterator<Item = &mut Box<dyn MapMarkerTrait>> {
         
         // Make the hover pos relative to the map rect instead of the whole window (i.e. 0px/0px is the top left of the map rect)
         hover_pos -= map_rect.left_top().to_vec2();
@@ -542,12 +540,13 @@ impl MapOverlayManager {
         let (geo_min_x, geo_max_x) = (geo_rect.min().x, geo_rect.max().x);
         let (geo_min_y, geo_max_y) = (inverse_gudermannian(geo_rect.min().y), inverse_gudermannian(geo_rect.max().y));
 
-        self.markers.iter()
-        .filter(move |marker| geo_rect.intersects(&marker.location))
+        self.markers.iter_mut()
+        .filter(move |marker| geo_rect.intersects(marker.location()))
         .filter(move |marker| {
             // Calculate the x and y coordinates for the marker
-            let x = convert_range(marker.location.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as f32;
-            let y = convert_range(inverse_gudermannian(marker.location.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as f32;
+            let location = marker.location();
+            let x = convert_range(location.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as f32;
+            let y = convert_range(inverse_gudermannian(location.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as f32;
 
             // Create the marker rect
             let point_rect = egui::Rect::from_center_size(egui::Pos2 { x, y }, Vec2 { x: 8.0, y: 8.0 });
@@ -591,11 +590,12 @@ impl MapOverlayManager {
         let (geo_min_y, geo_max_y) = (inverse_gudermannian(geo_rect.min().y), inverse_gudermannian(geo_rect.max().y));
 
         // Iterate through the visible markers
-        for point in self.markers.iter().filter(|c| geo_rect.intersects(&c.location)) {
+        for marker in self.markers.iter().filter(|c| geo_rect.intersects(c.location())) {
 
             // Calculate the x and y coordinates for the marker
-            let x = convert_range(point.location.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as f32;
-            let y = convert_range(inverse_gudermannian(point.location.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as f32;
+            let location = marker.location();
+            let x = convert_range(location.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as f32;
+            let y = convert_range(inverse_gudermannian(location.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as f32;
 
             // Create the marker rect
             let point_rect = imageproc::rect::Rect::at((x - 4.0) as i32, (y - 4.0) as i32)
@@ -605,7 +605,7 @@ impl MapOverlayManager {
             imageproc::drawing::draw_hollow_rect_mut(
                 &mut image_buf,
                 point_rect,
-                image::Rgba([255, 0, 0, 128])
+                marker.color()
             );
 
         }
@@ -1018,11 +1018,41 @@ enum CachedTile {
     Failed { failed_at: Instant }
 }
 
-/// A marker on the map
+
+/// Must be implemented for a marker that should be visible on the map.
+/// 
+/// This exists so you can easily create custom markers for different purposes.
+pub trait MapMarkerTrait {
+    /// Returns a reference containing the location of the marker
+    fn location(&self) -> &Coord<f64>;
+
+    /// This is called when the cursor is hovering over the marker.
+    ///
+    /// The provided `ui` is a tooltip placed at the cursor.
+    fn ui(&mut self, ui: &mut Ui);
+
+    /// The RGBA color of the marker
+    ///
+    /// Example: `image::Rgba([255, 0, 0, 255])` would be solid red.
+    fn color(&self) -> image::Rgba<u8>;
+}
+
 #[derive(Debug)]
-pub struct MapMarker {
-    /// The location of this marker
+struct DummyMapMarker {
     location: Coord<f64>
+}
+impl MapMarkerTrait for DummyMapMarker {
+    fn location(&self) -> &Coord<f64> {
+        &self.location
+    }
+
+    fn ui(&mut self, ui: &mut Ui) {
+        ui.label(format!("Location: {:.3?}", self.location()));
+    }
+
+    fn color(&self) -> image::Rgba<u8> {
+        image::Rgba([255, 0, 0, 255])
+    }
 }
 
 
