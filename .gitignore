@@ -1,6 +1,5 @@
-/target
-/ra_target
-/.*
-Cargo.lock
-
 !/.gitignore
+/target*
+/.*
+
+Cargo.lock
