@@ -49,7 +49,7 @@ pub struct MapWidget<T: MapMarkerTrait> {
     /// The tilemanager system is responsible for caching and fetching any tiles that the map widget requires
     tile_manager: TileManager,
     /// The overlay manager is responsible for lazily computing an overlay for the map. This is used to draw objects on the map with good performance
-    pub overlay_manager: MapOverlayManager<T>,
+    overlay_manager: MapOverlayManager<T>,
     /// The center of the map. `center_tile` is still used for movement since it's cheaper and simpler, but it isn't very precise,
     /// so we store the center location here and re-center the map on zoom events.
     center_loc: Coord<f64>,
@@ -472,6 +472,10 @@ impl<T: MapMarkerTrait> MapWidget<T> {
 
         response
     }
+
+    pub fn markers_mut(&mut self) -> &mut Vec<T> {
+        &mut self.overlay_manager.markers
+    }
 }
 impl<T: MapMarkerTrait> std::fmt::Debug for MapWidget<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -483,12 +487,12 @@ impl<T: MapMarkerTrait> std::fmt::Debug for MapWidget<T> {
 /// A struct that manages the map overlay. When given points on the map, this lazily draws the objects onto a transparent overlay, which is later drawn over the map itself.
 /// 
 /// This was created so we don't re-draw every point on the map every frame. This way, the points are only redrawn when the map changes
-pub struct MapOverlayManager<T: MapMarkerTrait> {
+struct MapOverlayManager<T: MapMarkerTrait> {
     /// A handle to the egui context. This is used for upload the overlay image to the GPU
     ctx: Context,
     /// Markers that should be drawn on the map
     // markers: Vec<Box<dyn MapMarkerTrait>>,
-    pub markers: Vec<T>,
+    markers: Vec<T>,
     /// A handle to the overlay image texture
     overlay: TextureHandle,
     /// The latest geo rect. This is used as a reference so we know if the map has changed and if we need to redraw the overlay
