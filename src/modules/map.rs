@@ -38,7 +38,7 @@ lazy_static! {
 ///       which means it can't be initialized with [Default::default()] like most widgets.
 ///       This typically requires you to wrap the map widget into an `Option<Self>` and initialize it as soon as a frame is rendered
 ///       so we can get access to the egui context and the tokio runtime.
-pub struct MapWidget {
+pub struct MapWidget<T: MapMarkerTrait> {
     map_rect_id: egui::Id,
     /// The tile in the center of the map
     center_tile: TileId,
@@ -49,16 +49,16 @@ pub struct MapWidget {
     /// The tilemanager system is responsible for caching and fetching any tiles that the map widget requires
     tile_manager: TileManager,
     /// The overlay manager is responsible for lazily computing an overlay for the map. This is used to draw objects on the map with good performance
-    overlay_manager: MapOverlayManager,
+    pub overlay_manager: MapOverlayManager<T>,
     /// The center of the map. `center_tile` is still used for movement since it's cheaper and simpler, but it isn't very precise,
     /// so we store the center location here and re-center the map on zoom events.
     center_loc: Coord<f64>,
 }
-impl MapWidget {
+impl<T: MapMarkerTrait> MapWidget<T> {
 
     pub fn new(ctx: &Context, config: &mut GuiConfig) -> Self {
         let tile_manager = TileManager::new(ctx, config.runtime.handle());
-        let overlay_manager = MapOverlayManager::new(ctx);
+        let mut overlay_manager = MapOverlayManager::new(ctx);
 
         Self {
             map_rect_id: generate_random_id(),
@@ -473,7 +473,7 @@ impl MapWidget {
         response
     }
 }
-impl std::fmt::Debug for MapWidget {
+impl<T: MapMarkerTrait> std::fmt::Debug for MapWidget<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MapWidget").field("Position", &self.relative_offset).field("Zoom", &self.zoom).finish()
     }
@@ -483,18 +483,19 @@ impl std::fmt::Debug for MapWidget {
 /// A struct that manages the map overlay. When given points on the map, this lazily draws the objects onto a transparent overlay, which is later drawn over the map itself.
 /// 
 /// This was created so we don't re-draw every point on the map every frame. This way, the points are only redrawn when the map changes
-struct MapOverlayManager {
+pub struct MapOverlayManager<T: MapMarkerTrait> {
     /// A handle to the egui context. This is used for upload the overlay image to the GPU
     ctx: Context,
     /// Markers that should be drawn on the map
-    markers: Vec<Box<dyn MapMarkerTrait>>,
+    // markers: Vec<Box<dyn MapMarkerTrait>>,
+    pub markers: Vec<T>,
     /// A handle to the overlay image texture
     overlay: TextureHandle,
     /// The latest geo rect. This is used as a reference so we know if the map has changed and if we need to redraw the overlay
     geo_rect: geo::Rect<f64>,
     cached_color_image: egui::ColorImage
 }
-impl MapOverlayManager {
+impl<T: MapMarkerTrait> MapOverlayManager<T> {
 
     fn new(ctx: &Context) -> Self {
 
@@ -507,18 +508,21 @@ impl MapOverlayManager {
             egui::TextureOptions::LINEAR
         );
 
-        let mut markers: Vec<Box<dyn MapMarkerTrait>> = Vec::with_capacity(500);
-        let mut rng = rand::thread_rng();
-        for _ in 0..500 {
-            // objects.push((geo::coord! { x: rng.gen_range(-100.0..-90.0), y: rng.gen_range(-40.0..-30.0) }, true));
-            let m = Box::new(DummyMapMarker { location: geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) } });
-            markers.push(m);
-            // markers.push((geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) }, true));
-        }
+        // let mut markers: Vec<T> = Vec::with_capacity(500);
+        // let mut rng = rand::thread_rng();
+        // for _ in 0..500 {
+        //     // objects.push((geo::coord! { x: rng.gen_range(-100.0..-90.0), y: rng.gen_range(-40.0..-30.0) }, true));
+        //     let m = Box::new(DummyMapMarker {
+        //         location: geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) },
+        //         callsign: arrayvec::ArrayString::from("K6JTH").unwrap()
+        //     });
+        //     markers.push(m);
+        //     // markers.push((geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) }, true));
+        // }
 
         Self {
             ctx: ctx.clone(),
-            markers,
+            markers: Default::default(),
             overlay: overlay_texture,
             geo_rect: geo::Rect::new(Coord::zero(), Coord::zero()),
             cached_color_image
@@ -527,7 +531,7 @@ impl MapOverlayManager {
 
     /// When provided with a geo rect, map rect, and a cursor hover position,
     /// this will return a iterator over the marker(s) that the cursor is hovering over.
-    fn hovered_objects_iter(&mut self, geo_rect: geo::Rect<f64>, map_rect: egui::Rect, mut hover_pos: egui::Pos2) -> impl Iterator<Item = &mut Box<dyn MapMarkerTrait>> {
+    fn hovered_objects_iter(&mut self, geo_rect: geo::Rect<f64>, map_rect: egui::Rect, mut hover_pos: egui::Pos2) -> impl Iterator<Item = &mut T> {
         
         // Make the hover pos relative to the map rect instead of the whole window (i.e. 0px/0px is the top left of the map rect)
         hover_pos -= map_rect.left_top().to_vec2();
@@ -1038,8 +1042,9 @@ pub trait MapMarkerTrait {
 }
 
 #[derive(Debug)]
-struct DummyMapMarker {
-    location: Coord<f64>
+pub struct DummyMapMarker {
+    pub location: Coord<f64>,
+    pub callsign: arrayvec::ArrayString<12>
 }
 impl MapMarkerTrait for DummyMapMarker {
     fn location(&self) -> &Coord<f64> {
@@ -1048,6 +1053,7 @@ impl MapMarkerTrait for DummyMapMarker {
 
     fn ui(&mut self, ui: &mut Ui) {
         ui.label(format!("Location: {:.3?}", self.location()));
+        ui.label(format!("Callsign: {}", self.callsign));
     }
 
     fn color(&self) -> image::Rgba<u8> {

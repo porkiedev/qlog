@@ -24,6 +24,7 @@ rand = "0.8"
 geo = "0.28"
 image = { version = "0.25", default-features = false, features = ["png"] }
 imageproc = { version = "0.25", default-features = false }
+arrayvec = {version = "0.7", features = ["serde"] }
 
 # qol
 strum = "0.26"
