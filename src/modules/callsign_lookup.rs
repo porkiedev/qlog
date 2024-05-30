@@ -11,6 +11,8 @@ use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{runtime::Handle, sync::Mutex};
+use crate::RT;
+
 use super::types::{Event, SpawnedFuture};
 
 
@@ -26,8 +28,6 @@ const PROGRAM_NAME: &str = env!("CARGO_PKG_NAME");
 /// If credentials for *hamqth* are provided, it will be used in favor of *hamdb*.
 #[derive(Debug)]
 pub struct CallsignLookup {
-    /// A handle to the async runtime
-    handle: Handle,
     /// Optional HamQTH credentials `(username, password)`
     credentials: Option<(String, String)>,
     /// Optional HamQTH session ID
@@ -38,9 +38,8 @@ impl CallsignLookup {
     /// 
     /// For some non-US callsigns, HamDB may not have information about the callsign, so we can use HamQTH instead,
     /// but its API requires a username and password, so that can optionally be provided as `(username, password)`.
-    pub fn new(handle: Handle, credentials: Option<(String, String)>) -> Self {
+    pub fn new(credentials: Option<(String, String)>) -> Self {
         Self {
-            handle,
             credentials,
             hamqth_id: Default::default()
         }
@@ -130,7 +129,7 @@ impl CallsignLookup {
         let credentials = self.credentials.clone();
         let hamqth_id = self.hamqth_id.clone();
 
-        self.handle.spawn(async move {
+        RT.spawn(async move {
 
             // Query the HamDB API first
             let hamdb_query = Self::query_hamdb(callsign.clone()).await;
@@ -140,7 +139,7 @@ impl CallsignLookup {
                 return Ok(Event::CallsignLookedUp(Box::new(callsign_info)));
             }
 
-            debug!("HamDB query failed, retrying with HamQTH");
+            debug!("HamDB query failed, retrying with HamQTH:\n{hamdb_query:?}");
 
             // Get the session HamQTH ID and then query the API with that ID
             let session_id = Self::get_hamqth_session_id(credentials, hamqth_id).await?;

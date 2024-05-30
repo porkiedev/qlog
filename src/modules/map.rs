@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use thiserror::Error;
 use tokio::runtime::Handle;
-use crate::GuiConfig;
+use crate::{GuiConfig, RT};
 use super::gui::generate_random_id;
 
 
@@ -56,17 +56,14 @@ pub struct MapWidget<T: MapMarkerTrait> {
 }
 impl<T: MapMarkerTrait> MapWidget<T> {
 
-    pub fn new(ctx: &Context, config: &mut GuiConfig) -> Self {
-        let tile_manager = TileManager::new(ctx, config.runtime.handle());
-        let mut overlay_manager = MapOverlayManager::new(ctx);
-
+    pub fn new(ctx: &Context) -> Self {
         Self {
             map_rect_id: generate_random_id(),
             center_tile: Default::default(),
             relative_offset: Default::default(),
             zoom: Default::default(),
-            tile_manager,
-            overlay_manager,
+            tile_manager: TileManager::new(ctx),
+            overlay_manager: MapOverlayManager::new(ctx),
             center_loc: Coord::zero()
         }
     }
@@ -491,7 +488,6 @@ struct MapOverlayManager<T: MapMarkerTrait> {
     /// A handle to the egui context. This is used for upload the overlay image to the GPU
     ctx: Context,
     /// Markers that should be drawn on the map
-    // markers: Vec<Box<dyn MapMarkerTrait>>,
     markers: Vec<T>,
     /// A handle to the overlay image texture
     overlay: TextureHandle,
@@ -717,8 +713,6 @@ fn fill_tiles_breadth(
 pub struct TileManager {
     /// A handle to the egui context. This is used for upload images (tiles) to the GPU
     ctx: Context,
-    /// A handle to the tokio runtime
-    handle: Handle,
     /// Our pending tile load tasks in the background
     tasks: HashMap<TileId, Promise<Result<TextureHandle>>>,
     /// The image used as a placeholder while the tile is loading, or if an error occured while loading the tile
@@ -733,7 +727,7 @@ impl TileManager {
     const CACHE_LIFETIME: u64 = 5;
     /// This is how often we should retry loading a tile
     const RETRY_TIME: u64 = 3;
-    fn new(ctx: &Context, handle: &Handle) -> Self {
+    fn new(ctx: &Context) -> Self {
 
         // Upload the loading/error image to the GPU
         let loading_texture = ctx.load_texture(
@@ -744,7 +738,6 @@ impl TileManager {
 
         Self {
             ctx: ctx.clone(),
-            handle: handle.clone(),
             tasks: Default::default(),
             loading_texture,
             tile_cache: Default::default()
@@ -821,7 +814,7 @@ impl TileManager {
         else {
 
             // Enter the async runtime
-            let _enter_guard = self.handle.enter();
+            let _enter_guard = RT.enter();
 
             // Spawn a task to load the tile
             let promise = Promise::spawn_async(Self::get_tile_image_from_server(self.ctx.clone(), *tile_id, tile_provider.clone()));

@@ -5,10 +5,13 @@
 
 use std::collections::HashMap;
 
+use crate::RT;
+
 use super::{gui::{self, Tab}, maidenhead, map};
 use anyhow::Result;
 use egui::{emath::TSTransform, Id, Mesh, Rect, Widget};
 use log::debug;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tokio::{runtime::Handle, task::JoinHandle};
 
@@ -18,7 +21,7 @@ use tokio::{runtime::Handle, task::JoinHandle};
 pub struct PSKReporterTab {
     id: Id,
     #[serde(skip)]
-    map: Option<map::MapWidget>
+    map: Option<map::MapWidget<map::DummyMapMarker>>
 }
 impl Tab for PSKReporterTab {
     fn id(&self) -> egui::Id {
@@ -35,14 +38,28 @@ impl Tab for PSKReporterTab {
         let map = match &mut self.map {
             Some(m) => m,
             None => {
-                self.map = Some(map::MapWidget::new(ui.ctx(), config));
+                let mut map_widget = map::MapWidget::new(ui.ctx());
+                let markers = map_widget.markers_mut();
+                
+                // TODO: Remove this. This adds some dummy markers to the map for debug purposes
+                let mut rng = rand::thread_rng();
+                for _ in 0..500 {
+                    let m = map::DummyMapMarker {
+                        location: geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) },
+                        callsign: arrayvec::ArrayString::from("ACALLS1GN").unwrap()
+                    };
+                    markers.push(m);
+                }
+
+                self.map = Some(map_widget);
                 self.map.as_mut().unwrap()
             }
         };
 
         if ui.button("Test").clicked() {
-            // let fut = test();
+            let fut = test();
             // let resp = config.runtime.block_on(fut);
+            RT.spawn(fut);
             // debug!("Result: {resp:?}");
 
         };
@@ -70,12 +87,12 @@ async fn test() -> Result<()> {
     let mut response = reqwest::get(URL).await?
     .text().await?;
 
-    debug!("Raw text:\n{response}");
+    // debug!("Raw text:\n{response}");
 
     response.truncate(response.len() - 13);
     let _ = response.drain(..46);
 
-    let data: PSKReporterApiResponse = serde_json::from_str(&response)?;
+    let data: PSKReporterApiResponse = serde_json::from_str(&response).unwrap();
 
     debug!("API Response:\n{}", serde_json::to_string_pretty(&data)?);
 
@@ -87,7 +104,9 @@ struct PSKReporterApiResponse {
     #[serde(alias = "currentSeconds")]
     current_epoch: u64,
     #[serde(alias = "receptionReport")]
-    reports: Vec<ReceptionReport>
+    reports: Vec<NewReceptionReport>,
+    // #[serde(alias = "activeReceiver")]
+    // receivers: Vec<ActiveReceiver>
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -117,4 +136,34 @@ struct ReceptionReport {
     tx_dscc_grid: String,
     #[serde(alias = "sNR")]
     snr: i16
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct NewReceptionReport {
+    #[serde(alias = "receiverCallsign")]
+    rx_callsign: arrayvec::ArrayString<20>,
+    #[serde(alias = "receiverLocator")]
+    rx_grid: arrayvec::ArrayString<10>,
+    #[serde(alias = "senderCallsign")]
+    tx_callsign: arrayvec::ArrayString<20>,
+    #[serde(alias = "senderLocator")]
+    tx_grid: arrayvec::ArrayString<20>,
+    frequency: u64,
+    mode: arrayvec::ArrayString<16>,
+    #[serde(alias = "sNR")]
+    snr: i16
+}
+
+type CallsignString = arrayvec::ArrayString<12>;
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct ActiveReceiver {
+    /// The callsign of the receiving station
+    callsign: arrayvec::ArrayString<12>,
+    /// The grid locator of the receiving station
+    #[serde(alias = "locator")]
+    grid: arrayvec::ArrayString<10>,
+    /// The mode of the receiving station
+    mode: arrayvec::ArrayString<16>
 }

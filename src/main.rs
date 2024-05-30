@@ -2,11 +2,11 @@
 #![feature(hash_extract_if)]
 
 mod modules;
-
 use std::{env::current_exe, fs, io::ErrorKind, sync::Arc, time::{Duration, Instant}};
 use eframe::App;
 use egui::{widgets, Id, RichText, Ui, Widget, WidgetText};
 use egui_dock::{DockArea, DockState, TabViewer};
+use lazy_static::lazy_static;
 use log::{debug, error, info, trace};
 use serde::{Deserialize, Serialize};
 use modules::{callsign_lookup, database, gui::TabVariant, map, types};
@@ -18,6 +18,12 @@ use modules::gui::Tab;
 // Use mimalloc as the memory allocator
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+// Initialize the multithreaded tokio runtime
+lazy_static! {
+    /// The tokio runtime. This is a public constant so any part of the application can easily execute asynchronous tasks.
+    pub static ref RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build tokio runtime");
+}
 
 
 fn main() {
@@ -98,7 +104,7 @@ impl App for Gui {
 
             // The task is finished
             if task.is_finished() {
-                match config.runtime.block_on(task).unwrap() {
+                match RT.block_on(task).unwrap() {
                     Ok(event) => {
 
                         // The task is bound to a specific tab
@@ -356,9 +362,6 @@ impl FpsCounter {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GuiConfig {
-    /// The tokio async runtime
-    #[serde(skip)]
-    runtime: Runtime,
     /// The database API
     #[serde(skip)]
     db_api: database::DatabaseInterface,
@@ -386,14 +389,13 @@ pub struct GuiConfig {
 }
 impl Default for GuiConfig {
     fn default() -> Self {
-        
-        let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build tokio runtime");
-        let db = database::DatabaseInterface::new(runtime.handle().clone(), None, None).unwrap();
+
+        let db = database::DatabaseInterface::new(None, None).unwrap();
         // let db = database::DatabaseInterface::new(runtime.handle().clone(), Some("ws://127.0.0.1:8000".into()), None).unwrap();
-        let cl_api = callsign_lookup::CallsignLookup::new(runtime.handle().clone(), None);
+        let cl_api = callsign_lookup::CallsignLookup::new(None);
 
         Self {
-            runtime,
+            // runtime,
             db_api: db,
             cl_api,
             notifications: Default::default(),

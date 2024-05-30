@@ -9,6 +9,8 @@ use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use surrealdb::{engine::any::Any, opt::auth::Root, sql::{self, statements}, Surreal};
 use tokio::runtime::Handle;
+use crate::RT;
+
 use super::types::{self, Event, SpawnedFuture};
 use thiserror::Error;
 use anyhow::{Context, Result};
@@ -33,7 +35,6 @@ const DEFAULT_RECORD_LIMIT: usize = 10_000;
 /// - NOTE: The functions are blocking, so complicated queries may freeze the GUI. This may change in the future.
 #[derive(Debug)]
 pub struct DatabaseInterface {
-    handle: Handle,
     db: Surreal<Any>
 }
 impl DatabaseInterface {
@@ -51,7 +52,7 @@ impl DatabaseInterface {
     /// 5. For a temporary in-memory database, use `mem://`
     /// 
     /// - Note: For remote endpoints, use `wss` (WebSockets) if possible, and please don't use the insecure variant of WebSockets or HTTP.
-    pub fn new(handle: Handle, endpoint: Option<String>, credentials: Option<(&str, &str)>) -> Result<Self> {
+    pub fn new(endpoint: Option<String>, credentials: Option<(&str, &str)>) -> Result<Self> {
 
         // Format the endpoint as a string. This is either the user-provided endpoint, or the default embedded database
         let endpoint = endpoint.unwrap_or({
@@ -64,10 +65,9 @@ impl DatabaseInterface {
         });
 
         // Connect to the database
-        let db = handle.block_on(Self::connect_to_db(endpoint, credentials))?;
+        let db = RT.block_on(Self::connect_to_db(endpoint, credentials))?;
 
         Ok(Self {
-            handle,
             db
         })
     }
@@ -109,7 +109,7 @@ impl DatabaseInterface {
 
     /// Switches to the `contacts` database
     fn switch_contacts(&self) {
-        self.handle.block_on(async {
+        RT.block_on(async {
             self.db.use_db(DB_CONTACTS).await.expect("Failed to switch to the contacts database");
             debug!("Database context set to {DB_CONTACTS}");
         })
@@ -120,7 +120,7 @@ impl DatabaseInterface {
     /// If the insert was successful, this function returns the contact that was just inserted.
     pub fn insert_contact(&self, contact: types::Contact) -> SpawnedFuture {
         let db = self.db.clone();
-        self.handle.spawn(async move {
+        RT.spawn(async move {
                 
             // Create the create statement (create inception!)
             let stmt = statements::CreateStatement {
@@ -146,7 +146,7 @@ impl DatabaseInterface {
     /// If the update was successful, this function returns the contact after it was updated
     pub fn update_contact(&self, contact: types::Contact) -> SpawnedFuture {
         let db = self.db.clone();
-        self.handle.spawn(async move {
+        RT.spawn(async move {
 
             let id = contact.id.as_ref().unwrap().id.clone();
 
@@ -176,7 +176,7 @@ impl DatabaseInterface {
     /// If the removal was successful, this function returns the contact that was just removed.
     pub fn delete_contact(&self, id: sql::Id) -> SpawnedFuture {
         let db = self.db.clone();
-        self.handle.spawn(async move {
+        RT.spawn(async move {
 
             // Create the delete statement
             let stmt = statements::DeleteStatement {
@@ -203,7 +203,7 @@ impl DatabaseInterface {
     /// If the removal was successful, this function returns the contacts that were just removed.
     pub fn delete_contacts(&self, ids: Vec<sql::Id>) -> SpawnedFuture {
         let db = self.db.clone();
-        self.handle.spawn(async move {
+        RT.spawn(async move {
 
             // Parse the provided ids into table records
             let mut records: Vec<sql::Value> = Vec::new();
@@ -233,7 +233,7 @@ impl DatabaseInterface {
     /// 3. `sort_dir` can be used to change which direction the column should be ordered in.
     pub fn get_contacts(&self, start_at: usize, sort_col: Option<ContactTableColumn>, sort_dir: Option<ColumnSortDirection>) -> SpawnedFuture {
         let db = self.db.clone();
-        self.handle.spawn(async move {
+        RT.spawn(async move {
             
             // Initialize the `ORDER BY` columns vec
             let mut orders = Vec::new();
