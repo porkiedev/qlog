@@ -11,9 +11,11 @@ use super::{gui::{self, Tab}, maidenhead, map::{self, MapMarkerTrait}};
 use anyhow::Result;
 use egui::{emath::TSTransform, Id, Mesh, Rect, Widget};
 use geo::Coord;
-use log::debug;
+use log::{debug, error};
+use poll_promise::Promise;
 use rand::{Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tokio::{runtime::Handle, task::JoinHandle};
 
 
@@ -22,16 +24,19 @@ type GridString = arrayvec::ArrayString<10>;
 type ModeString = arrayvec::ArrayString<16>;
 
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct PSKReporterTab {
     id: Id,
     #[serde(skip)]
-    map: Option<map::MapWidget<PSKRMapMarker>>,
-    // map: Option<map::MapWidget<MapMarker>>,
+    map: Option<map::MapWidget<MapMarker>>,
     // map: Option<map::MapWidget<map::DummyMapMarker>>
+    /// RNG used to generate random IDs for map markers
     #[serde(skip)]
-    rng: rand::rngs::SmallRng
+    rng: rand::rngs::SmallRng,
+    #[serde(skip)]
+    /// The async task that queries the API and returns our map markers
+    api_task: Option<Promise<Result<ApiResponse>>>
 }
 impl Tab for PSKReporterTab {
     fn id(&self) -> egui::Id {
@@ -67,45 +72,69 @@ impl Tab for PSKReporterTab {
             }
         };
 
-        if ui.button("Test").clicked() {
-            let fut = test();
-            let resp = RT.block_on(fut).unwrap();
+        // The pending task finished; process the result
+        while self.api_task.as_ref().is_some_and(|p| p.poll().is_ready()) {
+            // Take the result and replace it with a None value
+            let response = self.api_task.take().unwrap().block_and_take();
 
+            // Parse the result, breaking out early if the result was an error
+            let response = match response {
+                Ok(r) => r,
+                Err(err) => {
+                    error!("Failed to query PSKReporter API: {err}");
+                    break;
+                }
+            };
+
+            // Get and clear the existing map markers
             let markers = map.markers_mut();
             markers.clear();
 
-            // let rx_location = maidenhead::grid_to_lat_lon(&report.rx_grid);
-            let mut rx_marker: Option<PSKRMapMarker> = None;
-            // let mut rx_location = None;
-            for report in resp.reports {
+            // The RX marker. This should be populated on the first iteration
+            let mut rx_marker: Option<MapMarker> = None;
 
+            // Iterate through the reception reports, convert them to map markers, and add them to the markers vec
+            for report in response.reports {
+
+                // Get the reciever location of the report. This populates rx_marker on the first iteration
                 let rx_location = match &rx_marker {
                     Some(r) => *r.location(),
                     None => {
-                        let r = PSKRMapMarker::Receiver { id: self.rng.next_u64(), location: maidenhead::grid_to_lat_lon(&report.rx_grid) };
+                        // Convert the receiver information into a marker and populate the rx marker option
+                        let r = MapMarker::Receiver { id: self.rng.next_u64(), location: maidenhead::grid_to_lat_lon(&report.rx_grid) };
                         let location = *r.location();
                         rx_marker = Some(r);
                         location
                     }
                 };
 
-                let m = PSKRMapMarker::Transmitter {
+                // Convert the reception report into a transmitter marker and push it into the markers vec
+                markers.push(MapMarker::Transmitter {
                     id: self.rng.next_u64(),
                     location: maidenhead::grid_to_lat_lon(&report.tx_grid),
                     rx_location,
                     inner: report
-                };
-                // let m = MapMarker::new(self.rng.next_u64(), report, rx_location);
-                markers.push(m);
+                });
+
             }
+
+            // Add the receiver maker to the markers vec
             if let Some(receiver) = rx_marker {
                 markers.push(receiver);
             }
 
+            // Update the map overlay now that we changed the markers
             map.update_overlay();
 
-            // // RT.spawn(fut);
-            // // debug!("Result: {resp:?}");
+        }
+
+        if ui.button("Test").clicked() {
+
+            // If no task is currently running, spawn one
+            if self.api_task.is_none() {
+                let _eg = RT.enter();
+                self.api_task = Some(Promise::spawn_async(test()));
+            }
 
         };
 
@@ -119,12 +148,23 @@ impl Default for PSKReporterTab {
         Self {
             id: gui::generate_random_id(),
             map: Default::default(),
-            rng: rand::rngs::SmallRng::from_entropy()
+            rng: rand::rngs::SmallRng::from_entropy(),
+            api_task: Default::default()
         }
     }
 }
+impl std::fmt::Debug for PSKReporterTab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PSKReporterTab")
+        .field("id", &self.id)
+        .field("map", &self.map)
+        .field("rng", &self.rng)
+        .finish()
+    }
+}
 
-enum PSKRMapMarker {
+/// A marker that's visible on the map
+enum MapMarker {
     /// A transmitter on the pskreporter map
     Transmitter {
         /// The ID of the map marker
@@ -144,18 +184,18 @@ enum PSKRMapMarker {
         location: Coord<f64>
     }
 }
-impl MapMarkerTrait for PSKRMapMarker {
+impl MapMarkerTrait for MapMarker {
     fn id(&self) -> u64 {
         *match self {
-            PSKRMapMarker::Transmitter { id, .. } => id,
-            PSKRMapMarker::Receiver { id, .. } => id
+            MapMarker::Transmitter { id, .. } => id,
+            MapMarker::Receiver { id, .. } => id
         }
     }
 
     fn location(&self) -> &Coord<f64> {
         match self {
-            PSKRMapMarker::Transmitter { location, .. } => location,
-            PSKRMapMarker::Receiver { location, .. } => location
+            MapMarker::Transmitter { location, .. } => location,
+            MapMarker::Receiver { location, .. } => location
         }
     }
 
@@ -177,13 +217,16 @@ impl MapMarkerTrait for PSKRMapMarker {
     }
 
     fn color(&self) -> image::Rgba<u8> {
-        image::Rgba([0, 255, 0, 255])
+        match self {
+            MapMarker::Transmitter { .. } => image::Rgba([255, 0, 0, 255]),
+            MapMarker::Receiver { .. } => image::Rgba([0, 255, 0, 255])
+        }
     }
 
     fn draw_line_hovered(&self) -> Option<&Coord<f64>> {
         match self {
-            PSKRMapMarker::Transmitter { rx_location, .. } => Some(rx_location),
-            PSKRMapMarker::Receiver { .. } => None
+            MapMarker::Transmitter { rx_location, .. } => Some(rx_location),
+            MapMarker::Receiver { .. } => None
         }
     }
 }
@@ -192,34 +235,52 @@ impl MapMarkerTrait for PSKRMapMarker {
 // const URL: &str = "https://www.pskreporter.info/cgi-bin/pskquery5.pl?encap=1&callback=doNothing&statistics=1&noactive=1&nolocator=1&flowStartSeconds=-43200&frange=6000000-8000000&mode=FT8&senderCallsign=KF0CZM&lastDuration=406";
 // const URL: &str = "https://www.pskreporter.info/cgi-bin/pskquery5.pl?encap=1&callback=doNothing&statistics=1&noactive=1&nolocator=1&flowStartSeconds=-900&receiverCallsign=VE4REM&lastDuration=4216";
 // const URL: &str = "https://www.pskreporter.info/cgi-bin/pskquery5.pl?encap=1&callback=doNothing&statistics=1&noactive=1&nolocator=1&flowStartSeconds=-3600&mode=FT8&receiverCallsign=VE4REM&lastseqno=47010219750&lastDuration=402";
+// TODO: Get rid of the "encap=1" query to remove the XML wrapper (what does this do to rate limit messages?)
 const RESPONSE: &str = include_str!("response.xml");
 
-async fn test() -> Result<PSKReporterApiResponse> {
+
+async fn test() -> Result<ApiResponse> {
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     // Query PSKReporter
     // let mut response = reqwest::get(URL).await?
     // .text().await?;
+    let _span = tracy_client::span!("Convert response to string");
     let mut response = RESPONSE.to_string();
+    drop(_span);
+    let _span = tracy_client::span!("Trim response string");
+    let trimmed_response = response.trim();
+    drop(_span);
 
-    response.truncate(response.len() - 13);
-    let _ = response.drain(..46);
+    let _span = tracy_client::span!("Deserialize pskreporter api response");
+    // Deserialize the API response body into an ApiResponse type
+    let deserialized_response = serde_json::from_str::<ApiResponse>(&trimmed_response[10..trimmed_response.len()-2])
+    .map_err(Error::Deserialize)?;
+    drop(_span);
+    // debug!("N Active Receivers: {}\nN Reception Reports: {}", deserialized_response.receivers.len(), deserialized_response.reports.len());
+    // debug!("Deserialized reports:\n{:?}", deserialized_response.reports);
 
-    // log::info!("Response:\n{response}");
+    Ok(deserialized_response)
+}
 
-    let data: PSKReporterApiResponse = serde_json::from_str(&response).unwrap();
-
-    // debug!("API Response:\n{}", serde_json::to_string_pretty(&data)?);
-
-    Ok(data)
+#[derive(Debug, Error)]
+enum Error {
+    #[error("Test error")]
+    Test,
+    #[error("Failed to query API: {0}")]
+    Request(reqwest::Error),
+    /// Failed to deserialize API response body because it was invalid
+    #[error("Failed to deserialize API response: {0}")]
+    Deserialize(serde_json::Error)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct PSKReporterApiResponse {
+struct ApiResponse {
     #[serde(alias = "currentSeconds")]
     current_epoch: u64,
     #[serde(alias = "receptionReport")]
     reports: Vec<ReceptionReport>,
-    // #[serde(alias = "activeReceiver")]
-    // receivers: Vec<ActiveReceiver>
+    #[serde(alias = "activeReceiver")]
+    receivers: Vec<ActiveReceiver>
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
