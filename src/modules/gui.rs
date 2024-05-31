@@ -1403,7 +1403,7 @@ fn power_parser(input: &str) -> Option<f64> {
 /// Formats a f64 (in hz) into a string (e.g. 5000 = `5.000KHz`)
 /// 
 /// Used by egui drag value widgets
-fn frequency_formatter(freq: f64, _range: RangeInclusive<usize>) -> String {
+pub fn frequency_formatter(freq: f64, _range: RangeInclusive<usize>) -> String {
     match freq {
         f if f >= 1_000_000_000.0 => format!("{:.3} GHz", freq / 1_000_000_000.0),
         f if f >= 1_000_000.0 => format!("{:.3} MHz", freq / 1_000_000.0),

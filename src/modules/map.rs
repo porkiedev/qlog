@@ -10,7 +10,7 @@ use image::{GenericImage, ImageBuffer, ImageDecoder};
 use lazy_static::lazy_static;
 use log::{debug, error};
 use poll_promise::Promise;
-use rand::Rng;
+use rand::{Rng, RngCore};
 use reqwest::Response;
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
@@ -31,7 +31,22 @@ lazy_static! {
     static ref CLIENT: reqwest::Client = reqwest::Client::builder().user_agent(format!("{NAME}/{VERSION} OSS for Amateur Radio Operators")).build().unwrap();
 }
 
-
+struct FocusedMarker {
+    id: u64,
+    hovered: bool,
+    clicked: bool,
+    selected: bool
+}
+impl FocusedMarker {
+    fn new(id: u64) -> Self {
+        Self {
+            id,
+            hovered: Default::default(),
+            clicked: Default::default(),
+            selected: Default::default()
+        }
+    }
+}
 /// A map widget. This aims to be a high-performance zoomable map with support for multiple different tile providers.
 /// 
 /// NOTE: Initialization of the MapWidget is a little unusual. The MapWidget requires access to the [egui::Context] and [tokio::runtime::Handle],
@@ -53,8 +68,16 @@ pub struct MapWidget<T: MapMarkerTrait> {
     /// The center of the map. `center_tile` is still used for movement since it's cheaper and simpler, but it isn't very precise,
     /// so we store the center location here and re-center the map on zoom events.
     center_loc: Coord<f64>,
+
+    /// Should the overlay be updated on the next frame?
+    update_overlay: bool,
+    /// The geo rect from last frame. This is used to determine if the map changed in any way (zoomed, moved, resized, etc)
+    last_geo_rect: geo::Rect<f64>,
+    /// The currently focused marker
+    focused_marker: FocusedMarker
 }
 impl<T: MapMarkerTrait> MapWidget<T> {
+    const TEXT_COLOR: egui::Color32 = Color32::from_rgb(219, 65, 5);
 
     pub fn new(ctx: &Context) -> Self {
         Self {
@@ -64,7 +87,10 @@ impl<T: MapMarkerTrait> MapWidget<T> {
             zoom: Default::default(),
             tile_manager: TileManager::new(ctx),
             overlay_manager: MapOverlayManager::new(ctx),
-            center_loc: Coord::zero()
+            center_loc: Coord::zero(),
+            update_overlay: Default::default(),
+            last_geo_rect: geo::Rect::new(geo::coord! { x: 0.0, y: 0.0 }, geo::coord! { x: 0.0, y: 0.0 }),
+            focused_marker: FocusedMarker::new(0)
         }
     }
 
@@ -280,6 +306,8 @@ impl<T: MapMarkerTrait> MapWidget<T> {
         // Allocate a painter that only clips anything outside the map rect
         let map_painter = ui.painter_at(map_rect);
 
+        // ===== MAP TILES ===== //
+
         // Calculate the tile size at the current zoom level
         let scale_zoom = (self.zoom % 1.0) + 1.0;
         let corrected_tile_size = 256.0 * scale_zoom;
@@ -312,13 +340,16 @@ impl<T: MapMarkerTrait> MapWidget<T> {
 
         }
 
-
-        // TODO: in-progress; draw map overlay
+        // ===== MAP OVERLAY ===== //
 
         // Get the geo rect
         let geo_rect = self.get_visible_geo_rect(&map_rect);
-        // Update the map overlay
-        self.overlay_manager.update_overlay(map_rect, geo_rect);
+        // Update the map overlay if asked or if the geo_rect changed
+        if self.update_overlay || geo_rect != self.last_geo_rect {
+            self.overlay_manager.update_overlay(map_rect, geo_rect, &self.focused_marker);
+            self.update_overlay = false;
+            self.last_geo_rect = geo_rect;
+        }
 
         // Draw the map overlay
         map_painter.image(
@@ -328,18 +359,55 @@ impl<T: MapMarkerTrait> MapWidget<T> {
             Color32::WHITE
         );
 
+        // ===== INTERACTION ===== //
+
         // Allocate a response for the map_rect. This allows us to sense for user input
         let map_response = ui.interact(map_rect, self.map_rect_id, egui::Sense::hover());
 
         // Display some text when the user hovers over a marker
-        let mut debug_text = String::new();
-        if let Some(mut hover_pos) = map_response.hover_pos() {
-            // Get the first marker (if there is one)
-            if let Some(marker) = self.overlay_manager.hovered_objects_iter(geo_rect, map_rect, hover_pos).next() {
-                debug_text.push_str(&format!("Marker at {:?}", marker.location()));
-                
+        if map_response.contains_pointer() {
+
+            // For interactions that require feedback (i.e. cursor hover tracking) we store the values from last frame before we update the input
+            let was_hovered_last_frame = self.focused_marker.hovered;
+
+            let hover_pos = ui.ctx().input(|i| i.pointer.hover_pos()).unwrap_or_default();
+            let clicked = ui.ctx().input(|i| i.pointer.primary_clicked());
+            self.focused_marker.clicked = clicked;
+
+            // Get the hovered marker (if there is one)
+            if let Some(marker) = self.overlay_manager.hovered_markers_iter_mut(geo_rect, map_rect, hover_pos).next() {
+
+                // If we are hovering over a different marker AND if no marker is already selected or if the marker was clicked, update the focused marker
+                if marker.id() != self.focused_marker.id && (!self.focused_marker.selected || self.focused_marker.clicked) {
+                    self.focused_marker = FocusedMarker::new(marker.id());
+                }
+
+                // If we are transitioning from not-hovered to hovered, update the hovered state and map overlay
+                if !was_hovered_last_frame {
+                    self.focused_marker.hovered = true;
+                    self.update_overlay = true;
+                }
+
+                // If the marker was clicked, toggle the selected state
+                if clicked {
+                    self.focused_marker.selected = !self.focused_marker.selected;
+                }
+
                 // Render the marker's tooltip UI
-                egui::containers::show_tooltip_at_pointer(ui.ctx(), self.map_rect_id.with("_tooltip"), |ui| marker.ui(ui));
+                egui::containers::show_tooltip_at_pointer(ui.ctx(), self.map_rect_id.with("_tooltip"), |ui| marker.hovered_ui(ui));
+
+            }
+            // No marker was hovered, so reset the hovered state of the focused marker and update the overlay if if we just were hovering last frame
+            else {
+
+                // Set the hovered state to false
+                self.focused_marker.hovered = false;
+
+                // If we are transitioning from hovered to not-hovered, update the map overlay
+                if was_hovered_last_frame {
+                    self.update_overlay = true;
+                }
+
             }
         }
 
@@ -397,6 +465,7 @@ impl<T: MapMarkerTrait> MapWidget<T> {
             self.center_tile.zoom = 0;
             self.zoom = 0.0;
             self.set_center_location(Coord::zero());
+
         }
 
         // Hover and Zoom logic
@@ -428,24 +497,29 @@ impl<T: MapMarkerTrait> MapWidget<T> {
         }
 
         // Allocate an overlay UI over the map. This is useful showing text on top of the map
-        ui.allocate_ui_at_rect(map_rect, |ui| {
+        ui.allocate_ui_at_rect(map_rect.shrink(4.0), |ui| {
 
             // Debug info
-            let debug_color = Color32::from_rgb(219, 65, 5);
-            let loc = self.get_center_location();
-            ui.colored_label(debug_color, format!("Current center location: {loc:?}"));
-            // ui.colored_label(debug_color, format!("Position: {:?}", self.relative_offset));
-            // ui.colored_label(debug_color, format!("Current center location: {loc:?}"));
-            // ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
-            // ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
-            // ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
-            ui.colored_label(debug_color, debug_text);
+            #[cfg(debug_assertions)]
+            {
+                let loc = self.get_center_location();
+                ui.colored_label(Self::TEXT_COLOR, format!("Current center location: {loc:?}"));
+                // ui.colored_label(debug_color, format!("Position: {:?}", self.relative_offset));
+                // ui.colored_label(debug_color, format!("Current center location: {loc:?}"));
+                // ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
+                // ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
+                // ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
+                ui.colored_label(Self::TEXT_COLOR, format!("Focused marker [{}]: (Selected: {}) (Clicked: {})",
+                self.focused_marker.id,
+                self.focused_marker.selected,
+                self.focused_marker.clicked));
 
-            let crosshair_rect = Rect::from_center_size(map_rect.center(), Vec2::new(5.0, 5.0));
-            map_painter.rect_filled(crosshair_rect, 0.0, Color32::RED);
+                let crosshair_rect = Rect::from_center_size(map_rect.center(), Vec2::new(5.0, 5.0));
+                map_painter.rect_filled(crosshair_rect, 0.0, Color32::RED);
 
-            // let ctx = ui.ctx().clone();
-            // ctx.texture_ui(ui);
+                // let ctx = ui.ctx().clone();
+                // ctx.texture_ui(ui);
+            }
 
             // If we are using the OpenStreetMap tile provider, add license attribution in the bottom-right of the map
             if let TileProvider::OpenStreetMap = config.map_tile_provider {
@@ -465,6 +539,30 @@ impl<T: MapMarkerTrait> MapWidget<T> {
                 });
             }
 
+            // Find the focused marker and render its selected ui if it's selected
+            if let Some(marker) = self.overlay_manager.markers.iter_mut().find(|m| m.id() == self.focused_marker.id) {
+                // The marker is selected, so render the selected ui
+                if self.focused_marker.selected {
+                    
+                    // TODO: Tried to add a background frame here but I ran into margin issues and it caused a vertical scroll bar to appear
+                    //       This is low priority but could be nice. Until then, we change the text color and give the marker a UI with no background
+                    // let c = ui.style().visuals.panel_fill;
+                    // egui::containers::Frame::none().fill(c).outer_margin(m).inner_margin(4.0).rounding(4.0).show(ui, |ui| {
+                    //     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    //         // ui.add_space(16.0);
+                    //         marker.selected_ui(ui);
+                    //     });
+                    // });
+
+                    // Render the UI in the bottom left corner of the map and with no background (i.e. no frame)
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                        // Override the text color so it's more visible with the map in the background
+                        ui.style_mut().visuals.override_text_color = Some(Self::TEXT_COLOR);
+                        marker.selected_ui(ui);
+                    });
+                }
+            }
+
         });
 
         response
@@ -472,6 +570,10 @@ impl<T: MapMarkerTrait> MapWidget<T> {
 
     pub fn markers_mut(&mut self) -> &mut Vec<T> {
         &mut self.overlay_manager.markers
+    }
+
+    pub fn update_overlay(&mut self) {
+        self.update_overlay = true;
     }
 }
 impl<T: MapMarkerTrait> std::fmt::Debug for MapWidget<T> {
@@ -529,9 +631,14 @@ impl<T: MapMarkerTrait> MapOverlayManager<T> {
         }
     }
 
+    fn visible_markers_iter_mut(&mut self, geo_rect: geo::Rect<f64>) -> impl Iterator<Item = &mut T> {
+        self.markers.iter_mut()
+        .filter(move |marker| geo_rect.intersects(marker.location()))
+    }
+
     /// When provided with a geo rect, map rect, and a cursor hover position,
     /// this will return a iterator over the marker(s) that the cursor is hovering over.
-    fn hovered_objects_iter(&mut self, geo_rect: geo::Rect<f64>, map_rect: egui::Rect, mut hover_pos: egui::Pos2) -> impl Iterator<Item = &mut T> {
+    fn hovered_markers_iter_mut(&mut self, geo_rect: geo::Rect<f64>, map_rect: egui::Rect, mut hover_pos: egui::Pos2) -> impl Iterator<Item = &mut T> {
         
         // Make the hover pos relative to the map rect instead of the whole window (i.e. 0px/0px is the top left of the map rect)
         hover_pos -= map_rect.left_top().to_vec2();
@@ -561,17 +668,8 @@ impl<T: MapMarkerTrait> MapOverlayManager<T> {
         
     }
 
-    fn update_overlay(&mut self, map_rect: egui::Rect, geo_rect: geo::Rect<f64>) {
+    fn update_overlay(&mut self, map_rect: egui::Rect, geo_rect: geo::Rect<f64>, focused_marker: &FocusedMarker) {
         let _span = tracy_client::span!("Update overlay");
-
-        // The geographically visible area hasn't changed; return early since there's no reason to redraw the overlay
-        if self.geo_rect == geo_rect {
-            return;
-        }
-        // The geographically visible area changed; update the geo rect
-        else {
-            self.geo_rect = geo_rect;
-        }
 
         // Get the width and height of the map rect
         let width = map_rect.width() as usize;
@@ -598,11 +696,29 @@ impl<T: MapMarkerTrait> MapOverlayManager<T> {
 
             // Calculate the x and y coordinates for the marker
             let location = marker.location();
-            let x = convert_range(location.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as f32;
-            let y = convert_range(inverse_gudermannian(location.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as f32;
+            let x = convert_range(location.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as i32;
+            let y = convert_range(inverse_gudermannian(location.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as i32;
+
+            // Draw a line to another point if the marker is focused and hovered
+            if marker.id() == focused_marker.id && (focused_marker.hovered || focused_marker.selected) {
+                if let Some(destination) = marker.draw_line_hovered() {
+                    // Calculate the destination x and y coordinates for the line
+                    let dest_x = convert_range(destination.x, [geo_min_x, geo_max_x], [0.0, width as f64]) as i32;
+                    let dest_y = convert_range(inverse_gudermannian(destination.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as i32;
+    
+                    // Draw a line from the marker to the destination
+                    imageproc::drawing::draw_antialiased_line_segment_mut(
+                        &mut image_buf,
+                        (x, y),
+                        (dest_x, dest_y),
+                        marker.color(),
+                        imageproc::pixelops::interpolate
+                    );
+                }
+            }
 
             // Create the marker rect
-            let point_rect = imageproc::rect::Rect::at((x - 4.0) as i32, (y - 4.0) as i32)
+            let point_rect = imageproc::rect::Rect::at(x - 4, y - 4)
                 .of_size(8, 8);
 
             // Draw the hollow rect
@@ -613,7 +729,7 @@ impl<T: MapMarkerTrait> MapOverlayManager<T> {
             );
 
         }
-        
+
         // Update the map overlay with our new image
         self.overlay.set(
             self.cached_color_image.clone(),
@@ -1024,37 +1140,65 @@ enum CachedTile {
 /// 
 /// This exists so you can easily create custom markers for different purposes.
 pub trait MapMarkerTrait {
+    /// Should return an ID that's unique to the marker. This is required so we can track marker interaction events (clicks, hovers, etc)
+    /// 
+    /// NOTE: This ID has to be unique, not necessarily random. Depending on your use, it could be a sequential ID or randomly generated.
+    /// Just ensure they are unique for each marker.
+    fn id(&self) -> u64;
+
     /// Returns a reference containing the location of the marker
     fn location(&self) -> &Coord<f64>;
 
     /// This is called when the cursor is hovering over the marker.
     ///
     /// The provided `ui` is a tooltip placed at the cursor.
-    fn ui(&mut self, ui: &mut Ui);
+    fn hovered_ui(&mut self, ui: &mut Ui) {}
+
+    /// This is called when the user selected the marker.
+    /// 
+    /// The provided `ui` is a menu placed in the corner of the map
+    fn selected_ui(&mut self, ui: &mut Ui) {}
 
     /// The RGBA color of the marker
     ///
     /// Example: `image::Rgba([255, 0, 0, 255])` would be solid red.
     fn color(&self) -> image::Rgba<u8>;
+
+    /// Implement this if you want the map widget to draw a line from this marker to another coordinate (possibly another marker) on hover
+    fn draw_line_hovered(&self) -> Option<Coord<f64>> { None }
 }
 
+/// A dummy map marker used for debugging and development.
 #[derive(Debug)]
 pub struct DummyMapMarker {
-    pub location: Coord<f64>,
-    pub callsign: arrayvec::ArrayString<12>
+    pub id: u64,
+    pub location: Coord<f64>
 }
 impl MapMarkerTrait for DummyMapMarker {
+    fn id(&self) -> u64 {
+        self.id
+    }
+
     fn location(&self) -> &Coord<f64> {
         &self.location
     }
 
-    fn ui(&mut self, ui: &mut Ui) {
+    fn hovered_ui(&mut self, ui: &mut Ui) {
+        ui.label(format!("Dummy marker [{}]", self.id));
         ui.label(format!("Location: {:.3?}", self.location()));
-        ui.label(format!("Callsign: {}", self.callsign));
+    }
+
+    fn selected_ui(&mut self, ui: &mut Ui) {
+        ui.label("SELECTED UI");
+        self.hovered_ui(ui);
     }
 
     fn color(&self) -> image::Rgba<u8> {
         image::Rgba([255, 0, 0, 255])
+    }
+
+    fn draw_line_hovered(&self) -> Option<Coord<f64>> {
+        Some(Coord { x: 0.0, y: 0.0 })
     }
 }
 
