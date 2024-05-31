@@ -1165,7 +1165,7 @@ pub trait MapMarkerTrait {
     fn color(&self) -> image::Rgba<u8>;
 
     /// Implement this if you want the map widget to draw a line from this marker to another coordinate (possibly another marker) on hover
-    fn draw_line_hovered(&self) -> Option<Coord<f64>> { None }
+    fn draw_line_hovered(&self) -> Option<&Coord<f64>> { None }
 }
 
 /// A dummy map marker used for debugging and development.
@@ -1197,8 +1197,8 @@ impl MapMarkerTrait for DummyMapMarker {
         image::Rgba([255, 0, 0, 255])
     }
 
-    fn draw_line_hovered(&self) -> Option<Coord<f64>> {
-        Some(Coord { x: 0.0, y: 0.0 })
+    fn draw_line_hovered(&self) -> Option<&Coord<f64>> {
+        Some(&Coord { x: 0.0, y: 0.0 })
     }
 }
 
