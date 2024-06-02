@@ -496,29 +496,32 @@ impl<T: MapMarkerTrait> MapWidget<T> {
 
         }
 
-        // Allocate an overlay UI over the map. This is useful showing text on top of the map
+        // Allocate a debug overlay UI over the map. This is useful showing text on top of the map
         ui.allocate_ui_at_rect(map_rect.shrink(4.0), |ui| {
 
-            // Debug info
-            #[cfg(debug_assertions)]
-            {
-                let loc = self.get_center_location();
-                ui.colored_label(Self::TEXT_COLOR, format!("Current center location: {loc:?}"));
-                // ui.colored_label(debug_color, format!("Position: {:?}", self.relative_offset));
-                // ui.colored_label(debug_color, format!("Current center location: {loc:?}"));
-                // ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
-                // ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
-                // ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
-                ui.colored_label(Self::TEXT_COLOR, format!("Focused marker [{}]: (Selected: {}) (Clicked: {})",
-                self.focused_marker.id,
-                self.focused_marker.selected,
-                self.focused_marker.clicked));
+            // Render the selected marker UI in the top right corner of the map
+            if let Some(marker) = self.overlay_manager.markers.iter_mut().find(|m| m.id() == self.focused_marker.id) {
+                // The marker is selected, so render the selected ui
+                if self.focused_marker.selected {
+                    
+                    // TODO: Tried to add a background frame here but I ran into margin issues and it caused a vertical scroll bar to appear
+                    //       This is low priority but could be nice. Until then, we change the text color and give the marker a UI with no background
+                    // let c = ui.style().visuals.panel_fill;
+                    // egui::containers::Frame::none().fill(c).outer_margin(m).inner_margin(4.0).rounding(4.0).show(ui, |ui| {
+                    //     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    //         // ui.add_space(16.0);
+                    //         marker.selected_ui(ui);
+                    //     });
+                    // });
 
-                let crosshair_rect = Rect::from_center_size(map_rect.center(), Vec2::new(5.0, 5.0));
-                map_painter.rect_filled(crosshair_rect, 0.0, Color32::RED);
-
-                // let ctx = ui.ctx().clone();
-                // ctx.texture_ui(ui);
+                    // Render the UI in the bottom left corner of the map and with no background (i.e. no frame)
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                        // Override the text color so it's more visible with the map in the background
+                        ui.style_mut().visuals.override_text_color = Some(Self::TEXT_COLOR);
+                        marker.selected_ui(ui);
+                    });
+                    
+                }
             }
 
             // If we are using the OpenStreetMap tile provider, add license attribution in the bottom-right of the map
@@ -539,30 +542,28 @@ impl<T: MapMarkerTrait> MapWidget<T> {
                 });
             }
 
-            // Find the focused marker and render its selected ui if it's selected
-            if let Some(marker) = self.overlay_manager.markers.iter_mut().find(|m| m.id() == self.focused_marker.id) {
-                // The marker is selected, so render the selected ui
-                if self.focused_marker.selected {
-                    
-                    // TODO: Tried to add a background frame here but I ran into margin issues and it caused a vertical scroll bar to appear
-                    //       This is low priority but could be nice. Until then, we change the text color and give the marker a UI with no background
-                    // let c = ui.style().visuals.panel_fill;
-                    // egui::containers::Frame::none().fill(c).outer_margin(m).inner_margin(4.0).rounding(4.0).show(ui, |ui| {
-                    //     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    //         // ui.add_space(16.0);
-                    //         marker.selected_ui(ui);
-                    //     });
-                    // });
+        });
 
-                    // Render the UI in the bottom left corner of the map and with no background (i.e. no frame)
-                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                        // Override the text color so it's more visible with the map in the background
-                        ui.style_mut().visuals.override_text_color = Some(Self::TEXT_COLOR);
-                        marker.selected_ui(ui);
-                    });
-                }
-            }
+        // Debug info
+        #[cfg(debug_assertions)]
+        ui.allocate_ui_at_rect(map_rect.shrink(4.0), |ui| {
+            let loc = self.get_center_location();
+            ui.colored_label(Self::TEXT_COLOR, format!("Current center location: {loc:?}"));
+            // ui.colored_label(debug_color, format!("Position: {:?}", self.relative_offset));
+            // ui.colored_label(debug_color, format!("Current center location: {loc:?}"));
+            // ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
+            // ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
+            // ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
+            ui.colored_label(Self::TEXT_COLOR, format!("Focused marker [{}]: (Selected: {}) (Clicked: {})",
+            self.focused_marker.id,
+            self.focused_marker.selected,
+            self.focused_marker.clicked));
 
+            let crosshair_rect = Rect::from_center_size(map_rect.center(), Vec2::new(5.0, 5.0));
+            map_painter.rect_filled(crosshair_rect, 0.0, Color32::RED);
+
+            // let ctx = ui.ctx().clone();
+            // ctx.texture_ui(ui);
         });
 
         response
@@ -1156,7 +1157,7 @@ pub trait MapMarkerTrait {
 
     /// This is called when the user selected the marker.
     /// 
-    /// The provided `ui` is a menu placed in the corner of the map
+    /// The provided `ui` is a menu placed in the corner of the map.
     fn selected_ui(&mut self, ui: &mut Ui) {}
 
     /// The RGBA color of the marker

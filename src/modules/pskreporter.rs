@@ -10,8 +10,8 @@ use crate::RT;
 use super::{gui::{self, Tab}, maidenhead, map::{self, MapMarkerTrait}};
 use anyhow::Result;
 use egui::{emath::TSTransform, Id, Mesh, Rect, Widget};
-use geo::Coord;
-use log::{debug, error};
+use geo::{point, Coord, GeodesicBearing, GeodesicDistance};
+use log::{debug, error, warn};
 use poll_promise::Promise;
 use rand::{Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -78,7 +78,7 @@ impl Tab for PSKReporterTab {
             let response = self.api_task.take().unwrap().block_and_take();
 
             // Parse the result, breaking out early if the result was an error
-            let response = match response {
+            let mut response = match response {
                 Ok(r) => r,
                 Err(err) => {
                     error!("Failed to query PSKReporter API: {err}");
@@ -92,19 +92,51 @@ impl Tab for PSKReporterTab {
 
             // The RX marker. This should be populated on the first iteration
             let mut rx_marker: Option<MapMarker> = None;
+            let mut rx_not_found = false;
 
             // Iterate through the reception reports, convert them to map markers, and add them to the markers vec
+            // while let Some(report) = response.reports.into_iter().next() {
+
+            // }
             for report in response.reports {
 
-                // Get the reciever location of the report. This populates rx_marker on the first iteration
-                let rx_location = match &rx_marker {
-                    Some(r) => *r.location(),
-                    None => {
-                        // Convert the receiver information into a marker and populate the rx marker option
-                        let r = MapMarker::Receiver { id: self.rng.next_u64(), location: maidenhead::grid_to_lat_lon(&report.rx_grid) };
-                        let location = *r.location();
-                        rx_marker = Some(r);
-                        location
+                // Get the location of the receiver/monitoring station. This populates rx_marker on the first iteration
+                // TODO: Move this outside of the function
+                let rx_location = if rx_not_found {
+                    // This should never happen but the PSKReporter API was reverse engineered and there's no guarantees that it'll give us the right monitor
+                    geo::Coord::zero()
+                } else {
+                    // Return the location of the rx monitor if it's
+                    match &rx_marker {
+                        Some(r) => *r.location(),
+                        None => {
+
+                            // Found a matching receiver in the receivers vec; populate the rx marker option
+                            if let Some(receiver) = response.receivers
+                            .extract_if(|r| r.callsign == report.rx_callsign).next() {
+
+                                // Convert the grid to coordinates
+                                let location = maidenhead::grid_to_lat_lon(&report.rx_grid);
+
+                                // Create a marker for the rx monitor and update the rx marker option
+                                rx_marker = Some(MapMarker::Receiver {
+                                    id: self.rng.next_u64(),
+                                    location,
+                                    inner: receiver
+                                });
+
+                                // Return the location
+                                location
+                            }
+                            // The receiver was not found; update the rx_not_found variable and print a warning.
+                            // This should never happen but the PSKReporter API was reverse engineered and there's no guarantees that we'll get what we expect.
+                            else {
+                                warn!("Failed to find monitoring station in receiver list");
+                                rx_not_found = true;
+                                geo::Coord::zero()
+                            }
+
+                        }
                     }
                 };
 
@@ -181,7 +213,9 @@ enum MapMarker {
         /// The ID of the map marker
         id: u64,
         /// The location of the receiver
-        location: Coord<f64>
+        location: Coord<f64>,
+        /// The inner data about the receiver
+        inner: ActiveReceiver
     }
 }
 impl MapMarkerTrait for MapMarker {
@@ -200,19 +234,64 @@ impl MapMarkerTrait for MapMarker {
     }
 
     fn hovered_ui(&mut self, ui: &mut egui::Ui) {
-        if let Self::Transmitter { id, location, rx_location, inner } = self {
-            
-            ui.label(format!("TX Station: {}", inner.tx_callsign));
-            ui.label(format!("RX Station: {}", inner.rx_callsign));
+        match self {
+            MapMarker::Transmitter { id, location, rx_location, inner } => {
+                
+                ui.heading("Reception Report");
 
-            let freq = gui::frequency_formatter(inner.frequency as f64, 0..=0);
-            ui.label(format!("Frequency: {freq}"));
+                // The TX and RX station callsign and grid square
+                ui.label(format!("TX Station: {}", inner.tx_callsign));
+                ui.label(format!("TX Grid: {}", inner.tx_grid));
+                ui.label(format!("RX Station: {}", inner.rx_callsign));
+                ui.label(format!("RX Grid: {}", inner.rx_grid));
 
-            ui.label(format!("SNR: {}dB", inner.snr));
-            ui.label(format!("At: {}", inner.time));
+                // The frequency of the transmitting station
+                let freq = gui::frequency_formatter(inner.frequency as f64, 0..=0);
+                ui.label(format!("Frequency: {freq}"));
 
-        } else {
-            ui.label("RECEIVER");
+                // The SNR of the transmitting station, as heard by the receiver
+                ui.label(format!("SNR: {}dB", inner.snr));
+
+                // The date and time of the contact in UTC
+                let time = chrono::DateTime::from_timestamp(inner.time as i64, 0).unwrap();
+                ui.label(format!("Time (UTC): {}", time.format("%H:%M:%S")));
+                ui.label(format!("Date (DMY): {}", time.format("%d/%m/%Y")));
+
+                // The distance and bearing to the receiver
+                // TODO: Add a measurement field to the config and support KM, not just miles
+                let (mut bearing, mut distance) = point!(*location).geodesic_bearing_distance(point!(*rx_location));
+                // Convert the distance to miles and add 180 degrees to the bearing so it's always positive
+                distance *= 0.0006213712;
+                bearing += 180.0;
+
+                ui.label(format!("Distance: {distance:.2} mi"));
+                ui.label(format!("Bearing to RX: {bearing:.0}\u{00B0}"));
+
+            },
+            MapMarker::Receiver { id, location, inner } => {
+
+                // ui.label("Monitor");
+                ui.heading("Monitoring Station");
+                ui.label(format!("Callsign: {}", inner.callsign));
+                ui.label(format!("Grid: {}", inner.grid));
+                ui.label(format!("Mode: {}", inner.mode));
+
+            }
+        }
+    }
+
+    fn selected_ui(&mut self, ui: &mut egui::Ui) {
+        match self {
+            MapMarker::Transmitter { id, location, rx_location, inner } => {
+                
+                self.hovered_ui(ui);
+
+            },
+            MapMarker::Receiver { .. } => {
+                // ui.label("Station Monitor");
+
+                self.hovered_ui(ui);
+            }
         }
     }
 
@@ -240,7 +319,6 @@ const RESPONSE: &str = include_str!("response.xml");
 
 
 async fn test() -> Result<ApiResponse> {
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     // Query PSKReporter
     // let mut response = reqwest::get(URL).await?
     // .text().await?;

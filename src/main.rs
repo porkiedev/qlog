@@ -1,5 +1,6 @@
 #![allow(unused)]
 #![feature(hash_extract_if)]
+#![feature(extract_if)]
 
 mod modules;
 use std::{env::current_exe, fs, io::ErrorKind, sync::Arc, time::{Duration, Instant}};
