@@ -5,7 +5,7 @@
 
 use std::{collections::HashMap, str::FromStr, time::Duration};
 
-use crate::RT;
+use crate::{GuiConfig, RT};
 
 use super::{gui::{self, Tab}, maidenhead, map::{self, MapMarkerTrait}};
 use anyhow::Result;
@@ -279,7 +279,7 @@ impl MapMarkerTrait for MapMarker {
         }
     }
 
-    fn hovered_ui(&mut self, ui: &mut egui::Ui) {
+    fn hovered_ui(&mut self, ui: &mut egui::Ui, config: &mut GuiConfig) {
         match self {
             MapMarker::Transmitter { grid, callsign, mode, .. } => {
 
@@ -322,8 +322,8 @@ impl MapMarkerTrait for MapMarker {
                 // The distance and bearing to the receiver
                 // TODO: Add a measurement field to the config and support KM, not just miles
                 let (mut bearing, mut distance) = point!(*rx_location).geodesic_bearing_distance(point!(*location));
-                // Convert the distance to miles and convert the final bearing to an initial bearing
-                distance *= 0.0006213712;
+                // Convert the distance to the preferred unit and convert the final bearing to an initial bearing
+                distance = config.distance_unit.to_unit_from_meters(distance);
                 bearing = (bearing + 360.0) % 360.0;
 
                 ui.label(format!("Distance: {distance:.2} mi"));
@@ -355,8 +355,8 @@ impl MapMarkerTrait for MapMarker {
                 // The distance and bearing to the transmitter
                 // TODO: Add a measurement field to the config and support KM, not just miles
                 let (mut bearing, mut distance) = point!(*tx_location).geodesic_bearing_distance(point!(*location));
-                // Convert the distance to miles and convert the final bearing to an initial bearing
-                distance *= 0.0006213712;
+                // Convert the distance to the preferred unit and convert the final bearing to an initial bearing
+                distance = config.distance_unit.to_unit_from_meters(distance);
                 bearing = (bearing + 360.0) % 360.0;
 
                 ui.label(format!("Distance: {distance:.2} mi"));
@@ -366,8 +366,8 @@ impl MapMarkerTrait for MapMarker {
         }
     }
 
-    fn selected_ui(&mut self, ui: &mut egui::Ui) {
-        self.hovered_ui(ui);
+    fn selected_ui(&mut self, ui: &mut egui::Ui, config: &mut GuiConfig) {
+        self.hovered_ui(ui, config);
     }
 
     fn color(&self) -> image::Rgba<u8> {

@@ -394,7 +394,7 @@ impl<T: MapMarkerTrait> MapWidget<T> {
                 }
 
                 // Render the marker's tooltip UI
-                egui::containers::show_tooltip_at_pointer(ui.ctx(), self.map_rect_id.with("_tooltip"), |ui| marker.hovered_ui(ui));
+                egui::containers::show_tooltip_at_pointer(ui.ctx(), self.map_rect_id.with("_tooltip"), |ui| marker.hovered_ui(ui, config));
 
             }
             // No marker was hovered, so reset the hovered state of the focused marker and update the overlay if if we just were hovering last frame
@@ -518,7 +518,7 @@ impl<T: MapMarkerTrait> MapWidget<T> {
                     ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
                         // Override the text color so it's more visible with the map in the background
                         ui.style_mut().visuals.override_text_color = Some(Self::TEXT_COLOR);
-                        marker.selected_ui(ui);
+                        marker.selected_ui(ui, config);
                     });
                     
                 }
@@ -1153,12 +1153,12 @@ pub trait MapMarkerTrait {
     /// This is called when the cursor is hovering over the marker.
     ///
     /// The provided `ui` is a tooltip placed at the cursor.
-    fn hovered_ui(&mut self, ui: &mut Ui) {}
+    fn hovered_ui(&mut self, ui: &mut Ui, config: &mut GuiConfig) {}
 
     /// This is called when the user selected the marker.
     /// 
     /// The provided `ui` is a menu placed in the corner of the map.
-    fn selected_ui(&mut self, ui: &mut Ui) {}
+    fn selected_ui(&mut self, ui: &mut Ui, config: &mut GuiConfig) {}
 
     /// The RGBA color of the marker
     ///
@@ -1184,14 +1184,14 @@ impl MapMarkerTrait for DummyMapMarker {
         &self.location
     }
 
-    fn hovered_ui(&mut self, ui: &mut Ui) {
+    fn hovered_ui(&mut self, ui: &mut Ui, config: &mut GuiConfig) {
         ui.label(format!("Dummy marker [{}]", self.id));
         ui.label(format!("Location: {:.3?}", self.location()));
     }
 
-    fn selected_ui(&mut self, ui: &mut Ui) {
+    fn selected_ui(&mut self, ui: &mut Ui, config: &mut GuiConfig) {
         ui.label("SELECTED UI");
-        self.hovered_ui(ui);
+        self.hovered_ui(ui, config);
     }
 
     fn color(&self) -> image::Rgba<u8> {

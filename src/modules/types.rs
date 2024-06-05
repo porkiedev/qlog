@@ -102,6 +102,22 @@ pub enum Event {
     CallsignLookedUp(Box<CallsignInformation>)
 }
 
+/// The distance unit used by the GUI
+#[derive(Debug, Serialize, Deserialize)]
+pub enum DistanceUnit {
+    Kilometers,
+    Miles
+}
+impl DistanceUnit {
+    /// Converts a distance in meters to the unit of `self`
+    pub fn to_unit_from_meters(&self, meters: f64) -> f64 {
+        match self {
+            Self::Kilometers => meters / 1000.0,
+            Self::Miles => meters * 0.0006213712
+        }
+    }
+}
+
 /// The result of a task spawned on the tokio runtime.
 /// 
 /// The spawned future should be pushed onto the GUI task queue.

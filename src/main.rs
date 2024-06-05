@@ -386,7 +386,9 @@ pub struct GuiConfig {
     #[serde(skip)]
     add_tab_idx: usize,
     /// The tile provider used by any map widgets
-    map_tile_provider: map::TileProvider
+    map_tile_provider: map::TileProvider,
+    /// The distance unit used by the GUI
+    distance_unit: types::DistanceUnit,
 }
 impl Default for GuiConfig {
     fn default() -> Self {
@@ -404,7 +406,8 @@ impl Default for GuiConfig {
             tasks: Default::default(),
             fps_counter: Default::default(),
             add_tab_idx: Default::default(),
-            map_tile_provider: map::TileProvider::OpenStreetMap
+            map_tile_provider: map::TileProvider::OpenStreetMap,
+            distance_unit: types::DistanceUnit::Miles
         }
     }
 }
