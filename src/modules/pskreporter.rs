@@ -28,10 +28,10 @@ type ModeString = arrayvec::ArrayString<16>;
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct PSKReporterTab {
+    /// The ID of the tab
     id: Id,
     #[serde(skip)]
     map: Option<map::MapWidget<MapMarker>>,
-    // map: Option<map::MapWidget<map::DummyMapMarker>>
     /// RNG used to generate random IDs for map markers
     #[serde(skip)]
     rng: rand::rngs::SmallRng,
@@ -43,8 +43,11 @@ pub struct PSKReporterTab {
     callsign: String,
     /// Whether to filter for signals sent by the callsign, or received by the callsign
     sent_by: bool,
+    /// The band filter
     band: Band,
+    /// The mode filter
     mode: Mode,
+    /// The last duration filter
     last: Last
 }
 impl Tab for PSKReporterTab {
@@ -58,28 +61,8 @@ impl Tab for PSKReporterTab {
 
     fn ui(&mut self, config: &mut crate::GuiConfig, ui: &mut egui::Ui) {
 
-        // Initialize and get the map widget
-        let map = match &mut self.map {
-            Some(m) => m,
-            None => {
-                let mut map_widget = map::MapWidget::new(ui.ctx());
-                // let mut rng = rand::rngs::SmallRng::from_entropy();
-                // let markers = map_widget.markers_mut();
-
-                // // TODO: Remove this. This adds some dummy markers to the map for debug purposes
-                // for _ in 0..25 {
-                //     let m = map::DummyMapMarker {
-                //         id: rng.next_u64(),
-                //         location: geo::coord! { x: rng.gen_range(-180.0..180.0), y: rng.gen_range(-85.0..85.0) }
-                //     };
-                //     markers.push(m);
-                // }
-                // map_widget.update_overlay();
-
-                self.map = Some(map_widget);
-                self.map.as_mut().unwrap()
-            }
-        };
+        // Get the map widget, initializing it if it doesn't exist
+        let map = self.map.get_or_insert(map::MapWidget::new(ui.ctx()));
 
         // The pending task finished; process the result
         while self.api_task.as_ref().is_some_and(|p| p.poll().is_ready()) {
@@ -106,6 +89,7 @@ impl Tab for PSKReporterTab {
 
         }
 
+        // Render the widgets horizontally above the map
         ui.horizontal(|ui| {
 
             // Add a textbox to enter the callsign
@@ -170,8 +154,8 @@ impl Tab for PSKReporterTab {
                 }
             });
 
-            // The search button to query the API
-            if ui.button("Search").clicked() && self.api_task.is_none() {
+            // The search button to query the API. This is disabled if the API task is already running
+            if ui.add_enabled(self.api_task.is_none(), egui::widgets::Button::new("Search")).clicked() {
 
                 // Enter the tokio runtime
                 let _eg = RT.enter();
@@ -191,7 +175,7 @@ impl Tab for PSKReporterTab {
                     ));
                 }
                 
-            }
+            };
 
         });
 
@@ -253,6 +237,7 @@ enum MapMarker {
         /// The mode of the receiver
         mode: ModeString
     },
+    /// A reception report regarding a transmitter on the pskreporter map
     ReceptionReportTransmitter {
         /// The ID of the map marker
         id: u64,
@@ -263,6 +248,7 @@ enum MapMarker {
         /// The inner data about the reception report
         inner: ReceptionReport
     },
+    /// A reception report regarding a receiver on the pskreporter map
     ReceptionReportReceiver {
         /// The ID of the map marker
         id: u64,
@@ -295,7 +281,7 @@ impl MapMarkerTrait for MapMarker {
 
     fn hovered_ui(&mut self, ui: &mut egui::Ui) {
         match self {
-            MapMarker::Transmitter { id, location, grid, callsign, mode } => {
+            MapMarker::Transmitter { grid, callsign, mode, .. } => {
 
                 ui.heading("Transmitting Station");
                 ui.label(format!("Callsign: {}", callsign));
@@ -303,7 +289,7 @@ impl MapMarkerTrait for MapMarker {
                 ui.label(format!("Mode: {}", mode));
 
             },
-            MapMarker::Receiver { id, location, grid, callsign, mode } => {
+            MapMarker::Receiver { grid, callsign, mode, .. } => {
 
                 ui.heading("Monitoring Station");
                 ui.label(format!("Callsign: {}", callsign));
@@ -311,7 +297,7 @@ impl MapMarkerTrait for MapMarker {
                 ui.label(format!("Mode: {}", mode));
 
             },
-            MapMarker::ReceptionReportTransmitter { id, location, rx_location, inner } => {
+            MapMarker::ReceptionReportTransmitter { location, rx_location, inner, .. } => {
                 
                 ui.heading("Reception Report");
 
@@ -344,7 +330,7 @@ impl MapMarkerTrait for MapMarker {
                 ui.label(format!("Bearing from RX to TX: {bearing:.0}\u{00B0}"));
 
             },
-            MapMarker::ReceptionReportReceiver { id, location, tx_location, inner } => {
+            MapMarker::ReceptionReportReceiver { location, tx_location, inner, .. } => {
 
                 ui.heading("Reception Report");
 
@@ -385,12 +371,11 @@ impl MapMarkerTrait for MapMarker {
     }
 
     fn color(&self) -> image::Rgba<u8> {
-        // TODO: Improve colors. The green is hard to see with the map. Also, consider shifting a color based on how long ago the reception report was generated
         match self {
-            MapMarker::Transmitter { id, location, grid, callsign, mode } => image::Rgba([0, 255, 0, 255]),
-            MapMarker::Receiver { id, location, grid, callsign, mode } => image::Rgba([0, 255, 0, 255]),
-            MapMarker::ReceptionReportTransmitter { id, location, rx_location, inner } => image::Rgba([255, 0, 0, 255]),
-            MapMarker::ReceptionReportReceiver { id, location, tx_location, inner } => image::Rgba([255, 0, 0, 255]),
+            MapMarker::Transmitter { .. } => image::Rgba([0, 0, 255, 255]),
+            MapMarker::Receiver { .. } => image::Rgba([0, 0, 255, 255]),
+            MapMarker::ReceptionReportTransmitter { .. } => image::Rgba([255, 0, 0, 255]),
+            MapMarker::ReceptionReportReceiver { .. } => image::Rgba([255, 0, 0, 255]),
         }
     }
 
@@ -405,10 +390,12 @@ impl MapMarkerTrait for MapMarker {
 }
 
 
+/// A simple API query builder for the PSKReporter API. This abstracts the details of the API and allows for simple querying of the API.
 struct ApiQueryBuilder {
     query: HashMap<String, String>
 }
 impl ApiQueryBuilder {
+    /// The PSKReporter API URL
     const URL: &'static str = "https://retrieve.pskreporter.info/query";
 
     /// Query the PSKReporter API for reception reports received by the given callsign on the specified band for the last `last` duration
@@ -572,6 +559,7 @@ impl ApiQueryBuilder {
 
     }
 
+    /// For internal use only. Sends a query to the PSKReporter API and deserializes the response body into an ApiResponse type.
     async fn send(mut self) -> Result<ApiResponse> {
 
         // Insert the doNothing callback so we get a JSON response
@@ -827,7 +815,7 @@ impl Last {
     }
 }
 
-
+/// The error type for the PSKReporter module
 #[derive(Debug, Error)]
 enum Error {
     /// Failed to send a request to the API
@@ -841,21 +829,26 @@ enum Error {
     RateLimited
 }
 
+
+/// A successful response from the PSKReporter API
 #[derive(Debug, Deserialize)]
 struct ApiResponse {
+    /// The current time in seconds since the epoch
     #[serde(alias = "currentSeconds")]
     current_epoch: u64,
+    /// The array of reception reports returned by the API
     #[serde(alias = "receptionReport")]
     reports: Vec<ReceptionReport>,
-    // #[serde(alias = "activeReceiver")]
-    // receivers: Vec<ActiveReceiver>
 }
 
+/// A failed response from the PSKReporter API. This is used to safely handle the API rate limit error.
 #[derive(Debug, Deserialize)]
 struct ApiResponseFailed {
+    /// The error message returned by the API
     message: String
 }
 
+/// A reception report from the PSKReporter API
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct ReceptionReport {
@@ -881,16 +874,4 @@ struct ReceptionReport {
     /// The signal to noise ratio of the transmitting station
     #[serde(alias = "sNR")]
     snr: i8
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
-struct ActiveReceiver {
-    /// The callsign of the receiving station
-    callsign: CallsignString,
-    /// The grid locator of the receiving station
-    #[serde(alias = "locator")]
-    grid: GridString,
-    /// The mode of the receiving station
-    mode: ModeString
 }

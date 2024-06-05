@@ -107,3 +107,13 @@ pub enum Event {
 /// The spawned future should be pushed onto the GUI task queue.
 /// The GUI will check for completed futures serially and send update events out to the corresponding tabs.
 pub type SpawnedFuture = JoinHandle<Result<Event>>;
+
+/// Converts a value from one range into a value in another range
+/// 
+/// Example: convert_range_u64(100, [0, 100], [0, 1000]) would return 100
+pub fn convert_range_u64(val: u64, r1: [u64; 2], r2: [u64; 2]) -> u64 {
+    (val - r1[0])
+        * (r2[1] - r2[0])
+        / (r1[1] - r1[0])
+        + r2[0]
+}
