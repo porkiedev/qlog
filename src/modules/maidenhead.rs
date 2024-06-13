@@ -67,10 +67,10 @@ pub fn grid_to_lat_lon(grid: &str) -> Coord {
 
         let num = if character.is_ascii_digit() {
             // Convert the character into its decimal value and subtract 48 to apply an offset. This gives us the number that the digit represents.
-            character as u32 - 48
+            (character as u32).saturating_sub(48)
         } else {
             // Convert the unicode character into its decimal value and subtract 65 to apply an offset. This gives us the alphabet index for each character.
-            character as u32 - 65
+            (character as u32).saturating_sub(65)
         };
 
         // 1st character; Longitude with 20 degrees of precision
