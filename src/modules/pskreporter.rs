@@ -46,7 +46,7 @@ pub struct PSKReporterTab {
 impl PSKReporterTab {
     // TODO: Make this configurable in the future
     /// The rate at which the API is queried.
-    const REFRESH_RATE: Duration = Duration::from_secs(30);
+    const REFRESH_RATE: Duration = Duration::from_secs(45);
     /// The height of the progress bar slider
     const SLIDER_HEIGHT: f32 = 8.0;
 }
