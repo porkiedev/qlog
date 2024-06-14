@@ -2,22 +2,17 @@
 // A PSKReporter abstraction interface
 //
 
-
 use std::{collections::HashMap, hash::{Hash, Hasher}, str::FromStr, time::{Duration, Instant}};
-
 use crate::{GuiConfig, ACCENT_COLOR, RT};
-
 use super::{gui::{self, Tab}, maidenhead, map::{self, MapMarkerTrait}};
 use anyhow::Result;
-use egui::{emath::TSTransform, Id, Mesh, Rect, Widget};
-use geo::{point, Coord, GeodesicArea, GeodesicBearing, GeodesicDistance, HaversineBearing, RhumbBearing};
+use egui::{Id, Widget};
+use geo::{point, Coord, GeodesicBearing};
 use log::{debug, error, warn};
 use poll_promise::Promise;
-use rand::{Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use thiserror::Error;
-use tokio::{runtime::Handle, task::JoinHandle};
 
 
 type CallsignString = arrayvec::ArrayString<20>;
@@ -32,9 +27,6 @@ pub struct PSKReporterTab {
     id: Id,
     #[serde(skip)]
     map: Option<map::MapWidget<MapMarker>>,
-    /// RNG used to generate random IDs for map markers
-    #[serde(skip)]
-    rng: rand::rngs::SmallRng,
     #[serde(skip)]
     /// The async task that queries the API and returns our map markers
     api_task: Option<Promise<Result<Vec<MapMarker>>>>,
@@ -59,7 +51,7 @@ impl PSKReporterTab {
     const SLIDER_HEIGHT: f32 = 8.0;
 }
 impl Tab for PSKReporterTab {
-    fn id(&self) -> egui::Id {
+    fn id(&self) -> Id {
         self.id
     }
 
@@ -83,7 +75,7 @@ impl Tab for PSKReporterTab {
             self.last_api_query = Some(Instant::now());
 
             // Parse the result, breaking out early if the result was an error
-            let mut response = match response {
+            let response = match response {
                 Ok(r) => r,
                 Err(err) => {
                     error!("Failed to query PSKReporter API: {err}");
@@ -101,6 +93,7 @@ impl Tab for PSKReporterTab {
             map.update_overlay();
         }
 
+        // If auto refresh is enabled, no task is pending, and the last API query was long enough ago, query the API again
         if self.auto_refresh && self.api_task.is_none() && !self.last_api_query.is_some_and(|t| t.elapsed() < Self::REFRESH_RATE) {
 
             // Only query the API if we have query options to use. The query options are only updated when the user clicks the search button.
@@ -112,14 +105,14 @@ impl Tab for PSKReporterTab {
 
                 // Create a new API query task
                 let task = match query_options.sent_by {
-                    /// Filter for signals sent by the callsign
+                    // Filter for signals sent by the callsign
                     true => Promise::spawn_async(ApiQueryBuilder::sent_by(
                         query_options.callsign.clone(),
                         query_options.band,
                         query_options.mode,
                         query_options.last.as_duration()
                     )),
-                    /// Filter for signals received by the callsign
+                    // Filter for signals received by the callsign
                     false => Promise::spawn_async(ApiQueryBuilder::received_by(
                         query_options.callsign.clone(),
                         query_options.band,
@@ -267,7 +260,6 @@ impl Default for PSKReporterTab {
         Self {
             id: gui::generate_random_id(),
             map: Default::default(),
-            rng: rand::rngs::SmallRng::from_entropy(),
             api_task: Default::default(),
             last_api_query: Default::default(),
             auto_refresh: Default::default(),
@@ -281,7 +273,6 @@ impl std::fmt::Debug for PSKReporterTab {
         f.debug_struct("PSKReporterTab")
         .field("id", &self.id)
         .field("map", &self.map)
-        .field("rng", &self.rng)
         .finish()
     }
 }
@@ -289,10 +280,15 @@ impl std::fmt::Debug for PSKReporterTab {
 /// Query options for the PSKReporter API. This is used by the GUI widgets.
 #[derive(Debug, Clone,Serialize, Deserialize)]
 struct QueryOptions {
+    /// The callsign to query for.
     callsign: String,
+    /// Whether we should query for signals sent by the callsign, or received by the callsign.
     sent_by: bool,
+    /// The band to filter for.
     band: Band,
+    /// The mode to filter for.
     mode: Mode,
+    /// How old can the reports be before we consider them stale?
     last: Last
 }
 impl Default for QueryOptions {
@@ -312,7 +308,7 @@ impl Default for QueryOptions {
 enum MapMarker {
     /// A transmitter on the pskreporter map
     Transmitter {
-        /// The ID of the map marker
+        /// The ID of the map marker. This is a hash of the reception report.
         id: u64,
         /// The location of the transmitter
         location: Coord<f64>,
@@ -325,7 +321,7 @@ enum MapMarker {
     },
     /// A receiver on the pskreporter map
     Receiver {
-        /// The ID of the map marker
+        /// The ID of the map marker. This is a hash of the reception report.
         id: u64,
         /// The location of the receiver
         location: Coord<f64>,
@@ -338,7 +334,7 @@ enum MapMarker {
     },
     /// A reception report regarding a transmitter on the pskreporter map
     ReceptionReportTransmitter {
-        /// The ID of the map marker
+        /// The ID of the map marker. This is a hash of the reception report.
         id: u64,
         /// The location of the transmitter
         location: Coord<f64>,
@@ -349,7 +345,7 @@ enum MapMarker {
     },
     /// A reception report regarding a receiver on the pskreporter map
     ReceptionReportReceiver {
-        /// The ID of the map marker
+        /// The ID of the map marker. This is a hash of the reception report.
         id: u64,
         /// The location of the receiver
         location: Coord<f64>,
@@ -532,7 +528,7 @@ impl ApiQueryBuilder {
         }
         
         // Create an instance of self
-        let mut s = Self {
+        let s = Self {
             query
         };
 
@@ -612,7 +608,7 @@ impl ApiQueryBuilder {
         }
 
         // Create an instance of self
-        let mut s = Self {
+        let s = Self {
             query
         };
 
@@ -669,7 +665,7 @@ impl ApiQueryBuilder {
         };
 
         // Execute the query
-        let mut response = reqwest::get(url).await
+        let response = reqwest::get(url).await
         .map_err(Error::Request)?
         .text().await
         .map_err(Error::Request)?;
@@ -927,6 +923,7 @@ enum Error {
 
 /// A successful response from the PSKReporter API
 #[derive(Debug, Deserialize)]
+#[allow(unused)]
 struct ApiResponse {
     /// The current time in seconds since the epoch
     #[serde(alias = "currentSeconds")]
@@ -971,7 +968,7 @@ struct ReceptionReport {
     snr: i8
 }
 
-/// Hashes a reception report into a u64 hash. This is used to generate a unique but repeatable ID for each report.
+/// Hashes a reception report into a u64. This is used to generate a unique but repeatable ID for each reception report.
 /// 
 /// This is useful for persisting the markers across overlay updates and API queries.
 /// If we update the map overlay and a marker exists with the same ID, we can persist the marker state across the update.
