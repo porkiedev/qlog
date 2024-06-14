@@ -60,9 +60,11 @@ impl Tab for PSKReporterTab {
     }
 
     fn ui(&mut self, config: &mut crate::GuiConfig, ui: &mut egui::Ui) {
-
+        
         // Get the map widget, initializing it if it doesn't exist
-        let map = self.map.get_or_insert(map::MapWidget::new(ui.ctx()));
+        // NOTE: We use get_or_insert_with here instead of get_or_insert because it lazily initializes the map widget.
+        // Using get_or_insert caused a huge performance hit, presumably because the value wasn't being lazily initialized.
+        let map = self.map.get_or_insert_with(|| map::MapWidget::new(ui.ctx()));
 
         // The pending task finished; process the result
         while self.api_task.as_ref().is_some_and(|p| p.poll().is_ready()) {
@@ -124,7 +126,7 @@ impl Tab for PSKReporterTab {
             // The 'band' combobox
             egui::ComboBox::new("band_combobox", "Band")
             .selected_text(self.band.as_str())
-            .show_ui(ui, |ui| { 
+            .show_ui(ui, |ui| {
                 // Iterate through the band options and render them as selectable labels
                 for opt in Band::iter() {
                     let text = opt.as_str();
