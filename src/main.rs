@@ -1,6 +1,7 @@
 #![allow(unused)]
 #![feature(hash_extract_if)]
 #![feature(extract_if)]
+#![feature(div_duration)]
 
 mod modules;
 use std::{env::current_exe, fs, io::ErrorKind, sync::Arc, time::{Duration, Instant}};
@@ -19,6 +20,9 @@ use modules::gui::Tab;
 // Use mimalloc as the memory allocator
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+/// A neon-orange accent color
+const ACCENT_COLOR: egui::Color32 = egui::Color32::from_rgb(219, 65, 5);
 
 // Initialize the multithreaded tokio runtime
 lazy_static! {

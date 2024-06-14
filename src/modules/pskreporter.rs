@@ -3,9 +3,9 @@
 //
 
 
-use std::{collections::HashMap, str::FromStr, time::Duration};
+use std::{collections::HashMap, hash::{Hash, Hasher}, str::FromStr, time::{Duration, Instant}};
 
-use crate::{GuiConfig, RT};
+use crate::{GuiConfig, ACCENT_COLOR, RT};
 
 use super::{gui::{self, Tab}, maidenhead, map::{self, MapMarkerTrait}};
 use anyhow::Result;
@@ -38,17 +38,25 @@ pub struct PSKReporterTab {
     #[serde(skip)]
     /// The async task that queries the API and returns our map markers
     api_task: Option<Promise<Result<Vec<MapMarker>>>>,
+    /// The last time the API was queried. This is updated when an API query is finished, not started.
+    #[serde(skip)]
+    last_api_query: Option<Instant>,
 
-    /// The callsign textbox
-    callsign: String,
-    /// Whether to filter for signals sent by the callsign, or received by the callsign
-    sent_by: bool,
-    /// The band filter
-    band: Band,
-    /// The mode filter
-    mode: Mode,
-    /// The last duration filter
-    last: Last
+    /// Whether or not we should automatically query the API
+    auto_refresh: bool,
+    /// The current query options
+    query_options: QueryOptions,
+    /// The query options that were used last time the API was queried.
+    /// 
+    /// This is used to automatically query the API every once in a while.
+    last_query_options: Option<QueryOptions>,
+}
+impl PSKReporterTab {
+    // TODO: Make this configurable in the future
+    /// The rate at which the API is queried.
+    const REFRESH_RATE: Duration = Duration::from_secs(30);
+    /// The height of the progress bar slider
+    const SLIDER_HEIGHT: f32 = 8.0;
 }
 impl Tab for PSKReporterTab {
     fn id(&self) -> egui::Id {
@@ -60,7 +68,7 @@ impl Tab for PSKReporterTab {
     }
 
     fn ui(&mut self, config: &mut crate::GuiConfig, ui: &mut egui::Ui) {
-        
+
         // Get the map widget, initializing it if it doesn't exist
         // NOTE: We use get_or_insert_with here instead of get_or_insert because it lazily initializes the map widget.
         // Using get_or_insert caused a huge performance hit, presumably because the value wasn't being lazily initialized.
@@ -70,6 +78,9 @@ impl Tab for PSKReporterTab {
         while self.api_task.as_ref().is_some_and(|p| p.poll().is_ready()) {
             // Take the result and replace it with a None value to indicate that the task is no longer pending
             let response = self.api_task.take().unwrap().block_and_take();
+
+            // Update the last API query time
+            self.last_api_query = Some(Instant::now());
 
             // Parse the result, breaking out early if the result was an error
             let mut response = match response {
@@ -88,21 +99,54 @@ impl Tab for PSKReporterTab {
 
             // Update the map overlay now that the markers have been updated
             map.update_overlay();
-
         }
+
+        if self.auto_refresh && self.api_task.is_none() && !self.last_api_query.is_some_and(|t| t.elapsed() < Self::REFRESH_RATE) {
+
+            // Only query the API if we have query options to use. The query options are only updated when the user clicks the search button.
+            if let Some(query_options) = self.last_query_options.as_ref() {
+                debug!("Querying PSKReporter API");
+
+                // Enter the tokio runtime
+                let _eg = RT.enter();
+
+                // Create a new API query task
+                let task = match query_options.sent_by {
+                    /// Filter for signals sent by the callsign
+                    true => Promise::spawn_async(ApiQueryBuilder::sent_by(
+                        query_options.callsign.clone(),
+                        query_options.band,
+                        query_options.mode,
+                        query_options.last.as_duration()
+                    )),
+                    /// Filter for signals received by the callsign
+                    false => Promise::spawn_async(ApiQueryBuilder::received_by(
+                        query_options.callsign.clone(),
+                        query_options.band,
+                        query_options.mode,
+                        query_options.last.as_duration()
+                    ))
+                };
+
+                // Update the api task
+                self.api_task = Some(task);
+
+            }
+        }
+
 
         // Render the widgets horizontally above the map
         ui.horizontal(|ui| {
 
             // Add a textbox to enter the callsign
-            egui::widgets::TextEdit::singleline(&mut self.callsign)
+            egui::widgets::TextEdit::singleline(&mut self.query_options.callsign)
             .hint_text("Callsign")
             .clip_text(true)
             .ui(ui);
 
             // Format the string for the sent_by combobox
             let sent_by_str = {
-                if self.sent_by {
+                if self.query_options.sent_by {
                     "Sent by"
                 } else {
                     "Received by"
@@ -114,45 +158,45 @@ impl Tab for PSKReporterTab {
             .selected_text(sent_by_str)
             .show_ui(ui, |ui| {
                 // The 'sent by' option was selected
-                if ui.selectable_label(self.sent_by, "Sent by").clicked() {
-                    self.sent_by = true;
+                if ui.selectable_label(self.query_options.sent_by, "Sent by").clicked() {
+                    self.query_options.sent_by = true;
                 };
                 // The 'received by' option was selected
-                if ui.selectable_label(!self.sent_by, "Received by").clicked() {
-                    self.sent_by = false;
+                if ui.selectable_label(!self.query_options.sent_by, "Received by").clicked() {
+                    self.query_options.sent_by = false;
                 };
             });
 
             // The 'band' combobox
             egui::ComboBox::new("band_combobox", "Band")
-            .selected_text(self.band.as_str())
+            .selected_text(self.query_options.band.as_str())
             .show_ui(ui, |ui| {
                 // Iterate through the band options and render them as selectable labels
                 for opt in Band::iter() {
                     let text = opt.as_str();
-                    ui.selectable_value(&mut self.band, opt, text);
+                    ui.selectable_value(&mut self.query_options.band, opt, text);
                 }
             });
 
             // The 'mode' combobox
             egui::ComboBox::new("mode_combobox", "Mode")
-            .selected_text(self.mode.as_str())
+            .selected_text(self.query_options.mode.as_str())
             .show_ui(ui, |ui| {
                 // Iterate through the mode options and render them as selectable labels
                 for opt in Mode::iter() {
                     let text = opt.as_str();
-                    ui.selectable_value(&mut self.mode, opt, text);
+                    ui.selectable_value(&mut self.query_options.mode, opt, text);
                 }
             });
 
             // The `last` combobox
             egui::ComboBox::new("last_combobox", "Last")
-            .selected_text(self.last.as_str())
+            .selected_text(self.query_options.last.as_str())
             .show_ui(ui, |ui| {
                 // Iterate through the last duration options and render them as selectable labels
                 for opt in Last::iter() {
                     let text = opt.as_str();
-                    ui.selectable_value(&mut self.last, opt, text);
+                    ui.selectable_value(&mut self.query_options.last, opt, text);
                 }
             });
 
@@ -162,22 +206,54 @@ impl Tab for PSKReporterTab {
                 // Enter the tokio runtime
                 let _eg = RT.enter();
 
+                // Update the last query options with the current query options
+                self.last_query_options = Some(self.query_options.clone());
+
                 // We are filtering for signals sent by the callsign
-                if self.sent_by {
+                if self.query_options.sent_by {
                     // Spawn a task to query the API for signals sent by the callsign
                     self.api_task = Some(Promise::spawn_async(
-                        ApiQueryBuilder::sent_by(self.callsign.clone(), self.band, self.mode, self.last.as_duration())
+                        ApiQueryBuilder::sent_by(
+                            self.query_options.callsign.clone(),
+                            self.query_options.band,
+                            self.query_options.mode,
+                            self.query_options.last.as_duration()
+                        )
                     ));
                 }
                 // We are filtering for signals received by the callsign
                 else {
                     // Spawn a task to query the API for signals received by the callsign
                     self.api_task = Some(Promise::spawn_async(
-                        ApiQueryBuilder::received_by(self.callsign.clone(), self.band, self.mode, self.last.as_duration())  
+                        ApiQueryBuilder::received_by(
+                            self.query_options.callsign.clone(),
+                            self.query_options.band,
+                            self.query_options.mode,
+                            self.query_options.last.as_duration()
+                        )
                     ));
                 }
                 
             };
+
+            // The auto refresh checkbox
+            ui.checkbox(&mut self.auto_refresh, "Auto Refresh");
+
+            // If auto refresh is enabled, show a progress bar indicating how long until the next API query
+            if self.auto_refresh {
+
+                // Get a value between 0.0 and 1.0 indicating how much time has passed since the last API query divided by the refresh rate
+                let completeness = self.last_api_query.as_ref().map(|t| t.elapsed().div_duration_f32(Self::REFRESH_RATE))
+                .unwrap_or(0.0)
+                .clamp(0.0, 1.0);
+
+                // Render the progress bar
+                egui::widgets::ProgressBar::new(completeness)
+                .desired_height(Self::SLIDER_HEIGHT)
+                .fill(ACCENT_COLOR)
+                .ui(ui);
+
+            }
 
         });
 
@@ -193,11 +269,10 @@ impl Default for PSKReporterTab {
             map: Default::default(),
             rng: rand::rngs::SmallRng::from_entropy(),
             api_task: Default::default(),
-            callsign: Default::default(),
-            sent_by: Default::default(),
-            band: Band::All,
-            mode: Mode::All,
-            last: Last::Minutes15
+            last_api_query: Default::default(),
+            auto_refresh: Default::default(),
+            query_options: Default::default(),
+            last_query_options: Default::default()
         }
     }
 }
@@ -211,7 +286,29 @@ impl std::fmt::Debug for PSKReporterTab {
     }
 }
 
+/// Query options for the PSKReporter API. This is used by the GUI widgets.
+#[derive(Debug, Clone,Serialize, Deserialize)]
+struct QueryOptions {
+    callsign: String,
+    sent_by: bool,
+    band: Band,
+    mode: Mode,
+    last: Last
+}
+impl Default for QueryOptions {
+    fn default() -> Self {
+        Self {
+            callsign: Default::default(),
+            sent_by: Default::default(),
+            band: Band::All,
+            mode: Mode::All,
+            last: Last::Minutes15
+        }
+    }
+}
+
 /// A marker that's visible on the map
+#[derive(Debug, Clone, Copy)]
 enum MapMarker {
     /// A transmitter on the pskreporter map
     Transmitter {
@@ -444,8 +541,6 @@ impl ApiQueryBuilder {
 
         // ===== PARSE API RESPONSE ===== //
 
-        // Create an instance of rng
-        let mut rng = rand::rngs::SmallRng::from_entropy();
         // Create the markers vec
         let mut markers = Vec::new();
 
@@ -453,7 +548,7 @@ impl ApiQueryBuilder {
         let rx_marker = if let Some(report) = response.reports.first() {
             // Convert the reception report into a receiver marker and return it
             MapMarker::Receiver {
-                id: rng.next_u64(),
+                id: hash_reception_report(report),
                 location: maidenhead::grid_to_lat_lon(&report.rx_grid),
                 grid: report.rx_grid,
                 callsign: report.rx_callsign,
@@ -469,7 +564,7 @@ impl ApiQueryBuilder {
         for report in response.reports {
             // Convert the reception report into a transmitter marker and push it into the markers vec
             markers.push(MapMarker::ReceptionReportTransmitter {
-                id: rng.next_u64(),
+                id: hash_reception_report(&report),
                 location: maidenhead::grid_to_lat_lon(&report.tx_grid),
                 rx_location: *rx_marker.location(),
                 inner: report
@@ -526,15 +621,13 @@ impl ApiQueryBuilder {
 
         // ===== PARSE API RESPONSE ===== //
         
-        // Create an instance of rng
-        let mut rng = rand::rngs::SmallRng::from_entropy();
         // Create the markers vec
         let mut markers = Vec::new();
 
         let tx_marker = if let Some(report) = response.reports.first() {
             // Convert the reception report into a transmitter marker and return it
             MapMarker::Transmitter {
-                id: rng.next_u64(),
+                id: hash_reception_report(report),
                 location: maidenhead::grid_to_lat_lon(&report.tx_grid),
                 grid: report.tx_grid,
                 callsign: report.tx_callsign,
@@ -546,7 +639,7 @@ impl ApiQueryBuilder {
 
         for report in response.reports {
             markers.push(MapMarker::ReceptionReportReceiver {
-                id: rng.next_u64(),
+                id: hash_reception_report(&report),
                 location: maidenhead::grid_to_lat_lon(&report.rx_grid),
                 tx_location: *tx_marker.location(),
                 inner: report
@@ -851,7 +944,7 @@ struct ApiResponseFailed {
 }
 
 /// A reception report from the PSKReporter API
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct ReceptionReport {
     /// The callsign of the receiving station
@@ -876,4 +969,18 @@ struct ReceptionReport {
     /// The signal to noise ratio of the transmitting station
     #[serde(alias = "sNR")]
     snr: i8
+}
+
+/// Hashes a reception report into a u64 hash. This is used to generate a unique but repeatable ID for each report.
+/// 
+/// This is useful for persisting the markers across overlay updates and API queries.
+/// If we update the map overlay and a marker exists with the same ID, we can persist the marker state across the update.
+fn hash_reception_report(report: &ReceptionReport) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    report.tx_callsign.hash(&mut hasher);
+    report.rx_callsign.hash(&mut hasher);
+    report.frequency.hash(&mut hasher);
+    report.snr.hash(&mut hasher);
+    report.time.hash(&mut hasher);
+    hasher.finish()
 }

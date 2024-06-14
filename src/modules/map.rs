@@ -541,7 +541,7 @@ impl<T: MapMarkerTrait> MapWidget<T> {
             // ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
             // ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
             // ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
-            ui.colored_label(Self::TEXT_COLOR, format!("Focused marker: {:?}", self.focused_marker));
+            ui.colored_label(Self::TEXT_COLOR, format!("Marker is focused: {}", self.focused_marker.is_some()));
 
             let crosshair_rect = Rect::from_center_size(map_rect.center(), Vec2::new(5.0, 5.0));
             map_painter.rect_filled(crosshair_rect, 0.0, Color32::RED);
@@ -557,8 +557,21 @@ impl<T: MapMarkerTrait> MapWidget<T> {
         &mut self.overlay_manager.markers
     }
 
+    /// Updates the map overlay. This is usually called when markers are added/remove from the map.
+    /// 
+    /// NOTE: When this function is called, the focused marker state is retained if a marker with the same ID still exists in the overlay, otherwise the focused marker is reset to None.
     pub fn update_overlay(&mut self) {
+        // Sets the update_overlay flag to true so the overlay is updated on the next frame
         self.update_overlay = true;
+
+        // If there is a focused marker but it doesn't exist in the overlay, reset the focused marker to None
+        if let Some(focused_marker_id) = self.focused_marker.as_ref().map(|m| m.id) {
+            // Search for any marker with a matching ID in the overlay
+            if !self.overlay_manager.markers.iter().any(|m| m.id() == focused_marker_id) {
+                // Couldn't find a matching marker, so reset the focused marker to None
+                self.focused_marker = None;
+            }
+        }
     }
 }
 impl<T: MapMarkerTrait> std::fmt::Debug for MapWidget<T> {
@@ -1118,11 +1131,11 @@ enum CachedTile {
 /// Must be implemented for a marker that should be visible on the map.
 /// 
 /// This exists so you can easily create custom markers for different purposes.
-pub trait MapMarkerTrait {
+pub trait MapMarkerTrait: Copy {
     /// Should return an ID that's unique to the marker. This is required so we can track marker interaction events (clicks, hovers, etc)
     /// 
-    /// NOTE: This ID has to be unique, not necessarily random. Depending on your use, it could be a sequential ID or randomly generated.
-    /// Just ensure they are unique for each marker.
+    /// NOTE: This ID has to be unique, not necessarily random. It may be useful to have the ID as a hash of the marker data. This allows the UI to persist the markers states across overlay updates.
+    /// However, this is not required.
     fn id(&self) -> u64;
 
     /// Returns a reference containing the location of the marker
@@ -1148,7 +1161,7 @@ pub trait MapMarkerTrait {
 }
 
 /// A dummy map marker used for debugging and development.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct DummyMapMarker {
     pub id: u64,
     pub location: Coord<f64>
