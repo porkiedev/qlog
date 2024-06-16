@@ -44,12 +44,9 @@ Project requirements:
             - Example: If the user found a contact in the contact table, they should be able to click a search button,
               which should send a message to the callsign search tab, telling it to search for a contact
 
+Project ideals:
+    1. Avoid breaking changes to the database schema
+
 TODOs:
-    1. Implement automatic database migration
-        - If the user updates their application to a new version with a new database schema,
-          we should detect that when the application is launched and automatically migrate the database to the new version
-        - Warning: How would this work with a remote database?
-          Perhaps we just need to avoid breaking database changes altogether, though that may be unrealistic
-    2. Show the contact duration in the contact table
-    3. Optimize the contact table for memory usage by only querying for the visible rows, +/- 50~ rows
-    4. Remove '#![feature(hash_extract_if)]' when extract_if becomes stable
+    1. Show the duration of a contact in the contact table
+    2. Optimize the contact table by only querying for the visible rows
