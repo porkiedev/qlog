@@ -11,7 +11,7 @@ use egui_dock::{DockArea, DockState, TabViewer};
 use lazy_static::lazy_static;
 use log::{debug, error, info, trace};
 use serde::{Deserialize, Serialize};
-use modules::{callsign_lookup, database, gui::TabVariant, map, types};
+use modules::{callsign_lookup, database, gui::TabVariant, map, pskreporter, types};
 use strum::{EnumCount, IntoEnumIterator};
 use tokio::runtime::Runtime;
 use modules::gui::Tab;
@@ -393,6 +393,8 @@ pub struct GuiConfig {
     map_tile_provider: map::TileProvider,
     /// The distance unit used by the GUI
     distance_unit: types::DistanceUnit,
+    /// The PSKReporter module config
+    pskreporter_config: pskreporter::Config
 }
 impl Default for GuiConfig {
     fn default() -> Self {
@@ -402,7 +404,6 @@ impl Default for GuiConfig {
         let cl_api = callsign_lookup::CallsignLookup::new(None);
 
         Self {
-            // runtime,
             db_api: db,
             cl_api,
             notifications: Default::default(),
@@ -411,7 +412,8 @@ impl Default for GuiConfig {
             fps_counter: Default::default(),
             add_tab_idx: Default::default(),
             map_tile_provider: map::TileProvider::OpenStreetMap,
-            distance_unit: types::DistanceUnit::Miles
+            distance_unit: types::DistanceUnit::Miles,
+            pskreporter_config: Default::default()
         }
     }
 }

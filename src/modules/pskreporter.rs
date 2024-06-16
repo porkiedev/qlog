@@ -44,9 +44,6 @@ pub struct PSKReporterTab {
     last_query_options: Option<QueryOptions>,
 }
 impl PSKReporterTab {
-    // TODO: Make this configurable in the future
-    /// The rate at which the API is queried.
-    const REFRESH_RATE: Duration = Duration::from_secs(45);
     /// The height of the progress bar slider
     const SLIDER_HEIGHT: f32 = 8.0;
 }
@@ -93,8 +90,8 @@ impl Tab for PSKReporterTab {
             map.update_overlay();
         }
 
-        // If auto refresh is enabled, no task is pending, and the last API query was long enough ago, query the API again
-        if self.auto_refresh && self.api_task.is_none() && !self.last_api_query.is_some_and(|t| t.elapsed() < Self::REFRESH_RATE) {
+        // If auto refresh is enabled, no task is pending, and the API query refresh rate has elapsed, query the API again
+        if self.auto_refresh && self.api_task.is_none() && !self.last_api_query.is_some_and(|t| t.elapsed().as_secs() < config.pskreporter_config.refresh_rate) {
 
             // Only query the API if we have query options to use. The query options are only updated when the user clicks the search button.
             if let Some(query_options) = self.last_query_options.as_ref() {
@@ -125,6 +122,7 @@ impl Tab for PSKReporterTab {
                 self.api_task = Some(task);
 
             }
+        
         }
 
 
@@ -236,7 +234,8 @@ impl Tab for PSKReporterTab {
             if self.auto_refresh {
 
                 // Get a value between 0.0 and 1.0 indicating how much time has passed since the last API query divided by the refresh rate
-                let completeness = self.last_api_query.as_ref().map(|t| t.elapsed().div_duration_f32(Self::REFRESH_RATE))
+                let completeness = self.last_api_query.as_ref().map(
+                    |t| t.elapsed().as_secs_f32() / config.pskreporter_config.refresh_rate as f32)
                 .unwrap_or(0.0)
                 .clamp(0.0, 1.0);
 
@@ -966,6 +965,21 @@ struct ReceptionReport {
     /// The signal to noise ratio of the transmitting station
     #[serde(alias = "sNR")]
     snr: i8
+}
+
+/// The global config for the PSKReporter module
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Config {
+    /// The refresh interval in seconds
+    pub refresh_rate: u64
+}
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            refresh_rate: 60
+        }
+    }
 }
 
 /// Hashes a reception report into a u64. This is used to generate a unique but repeatable ID for each reception report.
