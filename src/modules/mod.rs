@@ -5,3 +5,4 @@ pub mod callsign_lookup;
 pub mod pskreporter;
 pub mod map;
 pub mod maidenhead;
+pub mod settings;

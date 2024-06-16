@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use tokio::sync::{oneshot, watch};
 use crate::GuiConfig;
-use super::{callsign_lookup, database, pskreporter, types::{self, SpawnedFuture}};
+use super::{callsign_lookup, database, pskreporter, settings, types::{self, SpawnedFuture}};
 
 
 /// The tab trait. This should be implemented for each tab variant
@@ -50,7 +50,7 @@ pub trait Tab {
 
 
 /// The different GUI tab variants
-#[derive(Debug, Serialize, Deserialize, strum_macros::AsRefStr)]
+#[derive(Debug, Serialize, Deserialize, strum_macros::AsRefStr, strum_macros::EnumIter)]
 pub enum TabVariant {
     /// The default welcome tab
     Welcome(Box<WelcomeTab>),
@@ -61,7 +61,9 @@ pub enum TabVariant {
     /// A tab for looking up callsigns
     CallsignLookup(Box<CallsignLookupTab>),
     /// A tab for interfacing with PSKReporter
-    PSKReporter(Box<pskreporter::PSKReporterTab>)
+    PSKReporter(Box<pskreporter::PSKReporterTab>),
+    /// A settings tab
+    Settings(Box<settings::SettingsTab>)
 }
 impl Tab for TabVariant {
 
@@ -72,6 +74,7 @@ impl Tab for TabVariant {
             TabVariant::ContactLogger(data) => data.id(),
             TabVariant::CallsignLookup(data) => data.id(),
             TabVariant::PSKReporter(data) => data.id(),
+            TabVariant::Settings(data) => data.id(),
         }
     }
 
@@ -82,6 +85,7 @@ impl Tab for TabVariant {
             TabVariant::ContactLogger(data) => data.scroll_bars(),
             TabVariant::CallsignLookup(data) => data.scroll_bars(),
             TabVariant::PSKReporter(data) => data.scroll_bars(),
+            TabVariant::Settings(data) => data.scroll_bars(),
         }
     }
 
@@ -92,6 +96,7 @@ impl Tab for TabVariant {
             TabVariant::ContactLogger(data) => data.title(),
             TabVariant::CallsignLookup(data) => data.title(),
             TabVariant::PSKReporter(data) => data.title(),
+            TabVariant::Settings(data) => data.title(),
         }
     }
 
@@ -102,6 +107,7 @@ impl Tab for TabVariant {
             TabVariant::ContactLogger(data) => data.init(config),
             TabVariant::CallsignLookup(data) => data.init(config),
             TabVariant::PSKReporter(data) => data.init(config),
+            TabVariant::Settings(data) => data.init(config),
         }
     }
 
@@ -112,6 +118,7 @@ impl Tab for TabVariant {
             TabVariant::ContactLogger(data) => data.process_event(config, event),
             TabVariant::CallsignLookup(data) => data.process_event(config, event),
             TabVariant::PSKReporter(data) => data.process_event(config, event),
+            TabVariant::Settings(data) => data.process_event(config, event),
         }
     }
 
@@ -122,6 +129,7 @@ impl Tab for TabVariant {
             TabVariant::ContactLogger(data) => data.ui(config, ui),
             TabVariant::CallsignLookup(data) => data.ui(config, ui),
             TabVariant::PSKReporter(data) => data.ui(config, ui),
+            TabVariant::Settings(data) => data.ui(config, ui),
         }
     }
     

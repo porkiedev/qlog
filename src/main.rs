@@ -158,38 +158,32 @@ impl App for Gui {
                 egui::ComboBox::from_id_source("add_tab_combobox")
                 .selected_text("Add Tab")
                 .show_ui(ui, |ui| {
-                    for tab_idx in 0..5_u32 {
-                        
+
+                    for (tab_idx, mut tab) in TabVariant::iter().enumerate() {
+                        // ui.selectable_value(&mut self.add_tab_idx, tab_idx, tab.to_string());
+
                         // Get the text for each tab variant
                         let text = match tab_idx {
                             0 => "Home",
                             1 => "Contacts",
                             2 => "Contact Logger",
                             3 => "Callsign Lookup",
-                            4.. => "PSKReporter"
+                            4 => "PSKReporter",
+                            5.. => "Settings"
                         };
 
-                        // Render a selectable label for each tab variant, adding the tab if it was clicked
-                        if ui.selectable_label(false, text).clicked {
-
-                            // Create the tab
-                            let mut t = match tab_idx {
-                                0 => TabVariant::Welcome(Default::default()),
-                                1 => TabVariant::ContactTable(Default::default()),
-                                2 => TabVariant::ContactLogger(Default::default()),
-                                3 => TabVariant::CallsignLookup(Default::default()),
-                                4.. => TabVariant::PSKReporter(Default::default())
-                            };
+                        if ui.selectable_label(false, text).clicked() {
 
                             // Initialize the tab
-                            t.init(config);
+                            tab.init(config);
 
                             // Push the new tab to the GUI
-                            self.dock_state.push_to_focused_leaf(t);
+                            self.dock_state.push_to_focused_leaf(tab);
 
                         }
 
                     }
+
                 });
 
                 // If there are pending tasks (i.e. tasks running in the background), show a spinner

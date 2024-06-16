@@ -1050,14 +1050,18 @@ impl TileId {
 enum Error {
     #[error("Failed execute request: {0}")]
     Request(reqwest::Error),
-    #[error("Failed to tile from the tile provider ({0}): {1}")]
+    #[error("Failed to get tile from the tile provider ({0}): {1}")]
     TileProvider(reqwest::StatusCode, String),
     #[error("Failed to decode the tile image: {0}")]
-    ImageDecoding(image::ImageError)
+    ImageDecoding(image::ImageError),
+    #[error("No auth token was provided")]
+    NoAuthToken,
+    #[error("No style was provided")]
+    NoStyle
 }
 
 /// The supported tile providers. These are APIs that can be used to fetch tiles.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, strum_macros::EnumIter)]
 pub enum TileProvider {
     /// The OpenStreetMap API.
     OpenStreetMap,
@@ -1069,7 +1073,14 @@ pub enum TileProvider {
     /// - mapbox/light-v11
     /// - mapbox/navigation-night-v1
     /// - mapbox/navigation-day-v1
-    MapBox { access_token: String, style_owner: String, style: String },
+    MapBox {
+        /// The access token
+        access_token: String,
+        /// The style owner
+        style_owner: String,
+        /// The style name
+        style: String
+    },
     /// The CartoCDN API. You must specify a basemap style name.
     /// This is the style that will be used when querying the API
     /// 
@@ -1082,7 +1093,13 @@ pub enum TileProvider {
     /// - light_nolabels
     /// - rastertiles/voyager
     /// 
-    CartoCDN { access_token: String, style: String }
+    CartoCDN {
+        /// The access token
+        access_token: String,
+        /// The basemap style to use
+        #[serde(default)]
+        style: CartoCDNStyle
+    }
 }
 impl TileProvider {
     async fn get_tile(&self, tile_id: &TileId) -> Result<Response> {
@@ -1092,16 +1109,84 @@ impl TileProvider {
                 CLIENT.get(url).send().await.map_err(Error::Request)?
             },
             TileProvider::MapBox { access_token, style_owner, style } => {
+
+                // Ensure we have an access token
+                if access_token.is_empty() {
+                    Err(Error::NoAuthToken)?;
+                }
+
+                // Ensure we have a style and style owner
+                if style_owner.is_empty() || style.is_empty() {
+                    Err(Error::NoStyle)?;
+                }
+
                 let url = format!("https://api.mapbox.com/styles/v1/{style_owner}/{style}/tiles/256/{}/{}/{}", tile_id.zoom, tile_id.x, tile_id.y);
                 CLIENT.get(url).query(&[("access_token", &access_token)]).send().await.map_err(Error::Request)?
             },
             TileProvider::CartoCDN { access_token, style } => {
-                let url = format!("https://basemaps.cartocdn.com/{style}/{}/{}/{}.png", tile_id.zoom, tile_id.x, tile_id.y);
+
+                // Ensure we have an access token
+                if access_token.is_empty() {
+                    Err(Error::NoAuthToken)?;
+                }
+
+                let url = format!("https://basemaps.cartocdn.com/{}/{}/{}/{}.png", style.as_str(), tile_id.zoom, tile_id.x, tile_id.y);
                 CLIENT.get(url).bearer_auth(access_token).send().await.map_err(Error::Request)?
             }
         };
 
         Ok(response)
+    }
+
+    /// Returns the name of the tile providers. This is used to display the supported tile providers in the settings tab
+    pub fn tile_providers() -> [&'static str; 3] {
+        ["OpenStreetMap", "MapBox", "Carto"]
+    }
+
+    /// Returns the name of the tile provider as a string. This is used to display the supported tile providers in the settings tab
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TileProvider::OpenStreetMap => "OpenStreetMap",
+            TileProvider::MapBox { .. } => "MapBox",
+            TileProvider::CartoCDN { .. } => "Carto"
+        }
+    }
+}
+
+/// The supported CartoCDN map styles
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, strum_macros::EnumIter)]
+pub enum CartoCDNStyle {
+    #[default]
+    DarkMatter,
+    DarkMatterNoLabels,
+    Positron,
+    PositronNoLabels,
+    Voyager,
+    VoyagerNoLabels
+}
+impl CartoCDNStyle {
+    /// Returns the name of the style as a string
+    pub fn name(&self) -> &'static str {
+        match self {
+            CartoCDNStyle::DarkMatter => "Dark Matter",
+            CartoCDNStyle::DarkMatterNoLabels => "Dark Matter (No Labels)",
+            CartoCDNStyle::Positron => "Positron",
+            CartoCDNStyle::PositronNoLabels => "Positron (No Labels)",
+            CartoCDNStyle::Voyager => "Voyager",
+            CartoCDNStyle::VoyagerNoLabels => "Voyager (No Labels)"
+        }
+    }
+
+    /// Returns the url name of the style as a string
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CartoCDNStyle::DarkMatter => "dark_all",
+            CartoCDNStyle::DarkMatterNoLabels => "dark_nolabels",
+            CartoCDNStyle::Positron => "light_all",
+            CartoCDNStyle::PositronNoLabels => "light_nolabels",
+            CartoCDNStyle::Voyager => "rastertiles/voyager",
+            CartoCDNStyle::VoyagerNoLabels => "rastertiles/voyager_nolabels"
+        }
     }
 }
 
