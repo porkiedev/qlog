@@ -233,11 +233,9 @@ impl App for Gui {
             });
         });
 
-        let _span = tracy_client::span!("Show DockArea");
         // Render the dockable area
         DockArea::new(&mut self.dock_state)
         .show(ctx, &mut self.tab_viewer);
-        drop(_span);
 
         // Immediate mode. Immediately requests a redraw.
         // TODO: This is only for debugging. Should be toggleable.
@@ -317,7 +315,6 @@ impl TabViewer for GuiTabViewer {
     //
     // For non-interactive tabs, this is a static value, but each interactive tab must have a unique ID otherwise stuff gets weird
     fn id(&mut self, tab: &mut Self::Tab) -> Id {
-        let _span = tracy_client::span!("TabViewer::id()");
         tab.id()
     }
 
@@ -327,14 +324,11 @@ impl TabViewer for GuiTabViewer {
 
     // Renders the title for the tab
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        let _span = tracy_client::span!("TabViewer::title()");
         tab.title()
     }
 
     // Renders the UI for the tab
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        let _span = tracy_client::span!("TabViewer::ui()");
-        _span.emit_text(tab.as_ref());
         tab.ui(&mut self.config, ui)
     }
 }
