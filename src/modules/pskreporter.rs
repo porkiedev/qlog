@@ -10,6 +10,7 @@ use egui::{Id, Widget};
 use geo::{point, Coord, GeodesicBearing};
 use log::{debug, error, warn};
 use poll_promise::Promise;
+use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use thiserror::Error;
@@ -539,11 +540,15 @@ impl ApiQueryBuilder {
         // Create the markers vec
         let mut markers = Vec::new();
 
+        // Generate a random ID for the RX marker instead of using a hashed reception report.
+        // This prevents the RX marker from having a duplicate ID with a reception report.
+        let rx_marker_id = rand::rngs::SmallRng::from_entropy().next_u64();
+
         // Get the RX/monitor marker from the first reception report
         let rx_marker = if let Some(report) = response.reports.first() {
             // Convert the reception report into a receiver marker and return it
             MapMarker::Receiver {
-                id: hash_reception_report(report),
+                id: rx_marker_id,
                 location: maidenhead::grid_to_lat_lon(&report.rx_grid),
                 grid: report.rx_grid,
                 callsign: report.rx_callsign,
@@ -619,10 +624,14 @@ impl ApiQueryBuilder {
         // Create the markers vec
         let mut markers = Vec::new();
 
+        // Generate a random ID for the TX marker instead of using a hashed reception report.
+        // This prevents the TX marker from having a duplicate ID with a reception report.
+        let tx_marker_id = rand::rngs::SmallRng::from_entropy().next_u64();
+
         let tx_marker = if let Some(report) = response.reports.first() {
             // Convert the reception report into a transmitter marker and return it
             MapMarker::Transmitter {
-                id: hash_reception_report(report),
+                id: tx_marker_id,
                 location: maidenhead::grid_to_lat_lon(&report.tx_grid),
                 grid: report.tx_grid,
                 callsign: report.tx_callsign,
