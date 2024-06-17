@@ -377,12 +377,12 @@ pub struct GuiConfig {
     /// The selected index of the 'add tab' combobox in the top/menu bar
     #[serde(skip)]
     add_tab_idx: usize,
-    /// The tile provider used by any map widgets
-    map_tile_provider: map::TileProvider,
     /// The distance unit used by the GUI
     distance_unit: types::DistanceUnit,
     /// The PSKReporter module config
-    pskreporter_config: pskreporter::Config
+    pskreporter_config: pskreporter::Config,
+    /// The map widget config
+    map_config: map::Config
 }
 impl Default for GuiConfig {
     fn default() -> Self {
@@ -399,9 +399,9 @@ impl Default for GuiConfig {
             tasks: Default::default(),
             fps_counter: Default::default(),
             add_tab_idx: Default::default(),
-            map_tile_provider: map::TileProvider::OpenStreetMap,
             distance_unit: types::DistanceUnit::Miles,
-            pskreporter_config: Default::default()
+            pskreporter_config: Default::default(),
+            map_config: Default::default()
         }
     }
 }

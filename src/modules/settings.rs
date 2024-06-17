@@ -138,16 +138,16 @@ impl SettingsTabTrait for MapSettingsTab {
 
             // A combobox to select the map tile provider
             egui::ComboBox::from_id_source("map_tile_provider_combobox")
-            .selected_text(config.map_tile_provider.as_str())
+            .selected_text(config.map_config.tile_provider.as_str())
             .show_ui(ui, |ui| {
                 for tile_provider in map::TileProvider::iter() {
                     let text = tile_provider.as_str();
-                    ui.selectable_value(&mut config.map_tile_provider, tile_provider, text);
+                    ui.selectable_value(&mut config.map_config.tile_provider, tile_provider, text);
                 }
             });
 
             // If the tile provider requires extra configuration, show the extra configuration options
-            match &mut config.map_tile_provider {
+            match &mut config.map_config.tile_provider {
                 // OSM Doesn't require any extra configuration
                 map::TileProvider::OpenStreetMap => {},
                 // MapBox requires an access token and a style choice

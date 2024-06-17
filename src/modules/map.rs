@@ -20,6 +20,8 @@ use super::gui::generate_random_id;
 
 /// The maximum number of visible tiles. This is used to initialize hashmaps and vecs to improve frame time consistency (this is very overkill, lol)
 const MAX_TILES: usize = 128;
+/// The color of debug text
+const DEBUG_COLOR: egui::Color32 = Color32::from_rgb(219, 65, 5);
 
 const NAME: &str = env!("CARGO_PKG_NAME");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -76,8 +78,6 @@ pub struct MapWidget<T: MapMarkerTrait> {
     focused_marker: Option<FocusedMarker>
 }
 impl<T: MapMarkerTrait> MapWidget<T> {
-    const TEXT_COLOR: egui::Color32 = Color32::from_rgb(219, 65, 5);
-
     pub fn new(ctx: &Context) -> Self {
         Self {
             map_rect_id: generate_random_id(),
@@ -313,7 +313,7 @@ impl<T: MapMarkerTrait> MapWidget<T> {
         for (tile_id, tile_rect) in tiles {
 
             // Get the texture id of the tile image
-            let tile_tex = self.tile_manager.get_tile(&tile_id, &config.map_tile_provider);
+            let tile_tex = self.tile_manager.get_tile(&tile_id, &config.map_config.tile_provider);
 
             // Draw the tile
             map_painter.image(
@@ -512,7 +512,7 @@ impl<T: MapMarkerTrait> MapWidget<T> {
             }
 
             // If we are using the OpenStreetMap tile provider, add license attribution in the bottom-right of the map
-            if let TileProvider::OpenStreetMap = config.map_tile_provider {
+            if let TileProvider::OpenStreetMap = config.map_config.tile_provider {
 
                 // License attribution for OpenStreetMap in the bottom right corner of the map
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
@@ -535,13 +535,13 @@ impl<T: MapMarkerTrait> MapWidget<T> {
         #[cfg(debug_assertions)]
         ui.allocate_ui_at_rect(map_rect.shrink(4.0), |ui| {
             let loc = self.get_center_location();
-            ui.colored_label(Self::TEXT_COLOR, format!("Current center location: {loc:?}"));
+            ui.colored_label(DEBUG_COLOR, format!("Current center location: {loc:?}"));
             // ui.colored_label(debug_color, format!("Position: {:?}", self.relative_offset));
             // ui.colored_label(debug_color, format!("Current center location: {loc:?}"));
             // ui.colored_label(debug_color, format!("Zoom: {}", self.zoom));
             // ui.colored_label(debug_color, format!("Relative offset: {:?}", self.relative_offset));
             // ui.colored_label(debug_color, format!("Corrected tile size: {:?}", corrected_tile_size));
-            ui.colored_label(Self::TEXT_COLOR, format!("Marker is focused: {}", self.focused_marker.is_some()));
+            ui.colored_label(DEBUG_COLOR, format!("Marker is focused: {}", self.focused_marker.is_some()));
 
             let crosshair_rect = Rect::from_center_size(map_rect.center(), Vec2::new(5.0, 5.0));
             map_painter.rect_filled(crosshair_rect, 0.0, Color32::RED);
@@ -577,6 +577,21 @@ impl<T: MapMarkerTrait> MapWidget<T> {
 impl<T: MapMarkerTrait> std::fmt::Debug for MapWidget<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MapWidget").field("Position", &self.relative_offset).field("Zoom", &self.zoom).finish()
+    }
+}
+
+
+/// The configuration for the map widget
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Config {
+    /// The tile provider that should be used
+    pub tile_provider: TileProvider
+}
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            tile_provider: TileProvider::OpenStreetMap
+        }
     }
 }
 
