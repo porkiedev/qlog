@@ -331,7 +331,7 @@ impl<T: MapMarkerTrait> MapWidget<T> {
         let geo_rect = self.get_visible_geo_rect(&map_rect);
         // Update the map overlay if asked or if the geo_rect changed
         if self.update_overlay || geo_rect != self.last_geo_rect {
-            self.overlay_manager.update_overlay(map_rect, geo_rect, self.focused_marker.as_ref());
+            self.overlay_manager.update_overlay(map_rect, geo_rect, self.focused_marker.as_ref(), config);
             self.update_overlay = false;
             self.last_geo_rect = geo_rect;
         }
@@ -673,7 +673,7 @@ impl<T: MapMarkerTrait> MapOverlayManager<T> {
         
     }
 
-    fn update_overlay(&mut self, map_rect: egui::Rect, geo_rect: geo::Rect<f64>, focused_marker: Option<&FocusedMarker>) {
+    fn update_overlay(&mut self, map_rect: egui::Rect, geo_rect: geo::Rect<f64>, focused_marker: Option<&FocusedMarker>, config: &mut GuiConfig) {
         let _span = tracy_client::span!("Update overlay");
 
         // Get the width and height of the map rect
@@ -705,7 +705,6 @@ impl<T: MapMarkerTrait> MapOverlayManager<T> {
             let y = convert_range(inverse_gudermannian(location.y), [geo_min_y, geo_max_y], [height as f64, 0.0]) as i32;
 
             // Draw a line to another point if the marker is focused and hovered
-            // let focused_or_hovered = focused_marker.as_ref().filter(|m| marker.id() == m.id && (m.hovered || m.selected)); 
             if focused_marker.as_ref().filter(|m| marker.id() == m.id && (m.hovered || m.selected)).is_some() {
                 if let Some(destination) = marker.draw_line_hovered() {
                     // Calculate the destination x and y coordinates for the line
@@ -717,7 +716,7 @@ impl<T: MapMarkerTrait> MapOverlayManager<T> {
                         &mut image_buf,
                         (x, y),
                         (dest_x, dest_y),
-                        marker.color(),
+                        marker.color(config),
                         imageproc::pixelops::interpolate
                     );
                 }
@@ -731,7 +730,7 @@ impl<T: MapMarkerTrait> MapOverlayManager<T> {
             imageproc::drawing::draw_hollow_rect_mut(
                 &mut image_buf,
                 point_rect,
-                marker.color()
+                marker.color(config)
             );
 
         }
@@ -1254,7 +1253,7 @@ pub trait MapMarkerTrait: Copy {
     /// The RGBA color of the marker
     ///
     /// Example: `image::Rgba([255, 0, 0, 255])` would be solid red.
-    fn color(&self) -> image::Rgba<u8>;
+    fn color(&self, config: &mut GuiConfig) -> image::Rgba<u8>;
 
     /// Implement this if you want the map widget to draw a line from this marker to another coordinate (possibly another marker) on hover
     fn draw_line_hovered(&self) -> Option<&Coord<f64>> { None }
@@ -1285,7 +1284,7 @@ impl MapMarkerTrait for DummyMapMarker {
         self.hovered_ui(ui, config);
     }
 
-    fn color(&self) -> image::Rgba<u8> {
+    fn color(&self, config: &mut GuiConfig) -> image::Rgba<u8> {
         image::Rgba([255, 0, 0, 255])
     }
 

@@ -117,6 +117,27 @@ impl SettingsTabTrait for PSKReporterSettingsTab {
             });
         });
 
+        // The marker color settings
+        ui.group(|ui| {
+
+            // A label and color picker to set the transmitter color
+            ui.label("TX station color");
+            ui.color_edit_button_srgba_unmultiplied(&mut config.pskreporter_config.tx_color);
+
+            // A label and color picker to set the receiver color
+            ui.label("RX station color");
+            ui.color_edit_button_srgba_unmultiplied(&mut config.pskreporter_config.rx_color);
+
+            // A label and color picker to set the TX reception report color
+            ui.label("TX reception report color");
+            ui.color_edit_button_srgba_unmultiplied(&mut config.pskreporter_config.tx_reception_report_color);
+
+            // A label and color picker to set the RX reception report color
+            ui.label("RX reception report color");
+            ui.color_edit_button_srgba_unmultiplied(&mut config.pskreporter_config.rx_reception_report_color);
+
+        });
+
     }
 }
 

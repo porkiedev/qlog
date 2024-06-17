@@ -465,12 +465,12 @@ impl MapMarkerTrait for MapMarker {
         self.hovered_ui(ui, config);
     }
 
-    fn color(&self) -> image::Rgba<u8> {
+    fn color(&self, config: &mut GuiConfig) -> image::Rgba<u8> {
         match self {
-            MapMarker::Transmitter { .. } => image::Rgba([0, 0, 255, 255]),
-            MapMarker::Receiver { .. } => image::Rgba([0, 0, 255, 255]),
-            MapMarker::ReceptionReportTransmitter { .. } => image::Rgba([255, 0, 0, 255]),
-            MapMarker::ReceptionReportReceiver { .. } => image::Rgba([255, 0, 0, 255]),
+            MapMarker::Transmitter { .. } => image::Rgba(config.pskreporter_config.tx_color),
+            MapMarker::Receiver { .. } => image::Rgba(config.pskreporter_config.rx_color),
+            MapMarker::ReceptionReportTransmitter { .. } => image::Rgba(config.pskreporter_config.tx_reception_report_color),
+            MapMarker::ReceptionReportReceiver { .. } => image::Rgba(config.pskreporter_config.rx_reception_report_color),
         }
     }
 
@@ -981,12 +981,24 @@ struct ReceptionReport {
 #[serde(default)]
 pub struct Config {
     /// The refresh interval in seconds
-    pub refresh_rate: u64
+    pub refresh_rate: u64,
+    /// The color of the transmitting station markers
+    pub tx_color: [u8; 4],
+    /// The color of the receiving station markers
+    pub rx_color: [u8; 4],
+    /// The color of the transmitting station reception report markers
+    pub tx_reception_report_color: [u8; 4],
+    /// The color of the receiving station reception report markers
+    pub rx_reception_report_color: [u8; 4]
 }
 impl Default for Config {
     fn default() -> Self {
         Self {
-            refresh_rate: 60
+            refresh_rate: 60,
+            tx_color: [0, 0, 255, 255],
+            rx_color: [0, 0, 255, 255],
+            tx_reception_report_color: [255, 0, 0, 255],
+            rx_reception_report_color: [255, 0, 0, 255]
         }
     }
 }
