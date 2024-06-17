@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use chrono::{NaiveDate, NaiveTime};
 use strum_macros::{Display, EnumIter};
 use tokio::task::JoinHandle;
-use super::callsign_lookup::CallsignInformation;
+use crate::callsign_lookup::CallsignInformation;
 
 
 /// A radio contact

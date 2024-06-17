@@ -50,4 +50,3 @@ Project ideals:
 TODOs:
     1. Show the duration of a contact in the contact table
     2. Optimize the contact table by only querying for the visible rows
-    3. Allow the user to select a color for the map markers (or have a default color)

@@ -7,7 +7,7 @@ use egui::{Id, Widget};
 use egui_dock::{DockState, TabViewer};
 use serde::{Deserialize, Serialize};
 use strum::{EnumCount, IntoEnumIterator};
-use super::{gui, map};
+use crate::modules::{gui, map};
 
 /// The settings tab for the GUI
 #[derive(Debug, Serialize, Deserialize)]

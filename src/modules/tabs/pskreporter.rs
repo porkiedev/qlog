@@ -4,7 +4,7 @@
 
 use std::{collections::HashMap, hash::{Hash, Hasher}, str::FromStr, time::{Duration, Instant}};
 use crate::{GuiConfig, ACCENT_COLOR, RT};
-use super::{gui::{self, Tab}, maidenhead, map::{self, MapMarkerTrait}};
+use super::super::{gui::{self, Tab}, maidenhead, map::{self, MapMarkerTrait}};
 use anyhow::Result;
 use egui::{Id, Widget};
 use geo::{point, Coord, GeodesicBearing};

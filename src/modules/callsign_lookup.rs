@@ -12,8 +12,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{runtime::Handle, sync::Mutex};
 use crate::RT;
-
-use super::types::{Event, SpawnedFuture};
+use super::super::types::{Event, SpawnedFuture};
 
 
 const PROGRAM_NAME: &str = env!("CARGO_PKG_NAME");

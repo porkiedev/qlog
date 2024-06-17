@@ -11,7 +11,8 @@ use egui_dock::{DockArea, DockState, TabViewer};
 use lazy_static::lazy_static;
 use log::{debug, error, info, trace};
 use serde::{Deserialize, Serialize};
-use modules::{callsign_lookup, database, gui::TabVariant, map, pskreporter, types};
+use modules::tabs;
+use modules::{callsign_lookup, database, gui::TabVariant, map, types};
 use strum::{EnumCount, IntoEnumIterator};
 use tokio::runtime::Runtime;
 use modules::gui::Tab;
@@ -380,7 +381,7 @@ pub struct GuiConfig {
     /// The distance unit used by the GUI
     distance_unit: types::DistanceUnit,
     /// The PSKReporter module config
-    pskreporter_config: pskreporter::Config,
+    pskreporter_config: tabs::pskreporter::Config,
     /// The map widget config
     map_config: map::Config
 }
