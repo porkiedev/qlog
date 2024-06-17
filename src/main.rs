@@ -4,17 +4,16 @@
 #![feature(div_duration)]
 
 mod modules;
-use std::{env::current_exe, fs, io::ErrorKind, sync::Arc, time::{Duration, Instant}};
+use std::{env::current_exe, fs, io::ErrorKind, time::{Duration, Instant}};
 use eframe::App;
 use egui::{widgets, Id, RichText, Ui, Widget, WidgetText};
 use egui_dock::{DockArea, DockState, TabViewer};
 use lazy_static::lazy_static;
-use log::{debug, error, info, trace};
+use log::{debug, info, trace};
 use serde::{Deserialize, Serialize};
 use modules::tabs;
 use modules::{callsign_lookup, database, gui::TabVariant, map, types};
-use strum::{EnumCount, IntoEnumIterator};
-use tokio::runtime::Runtime;
+use strum::IntoEnumIterator;
 use modules::gui::Tab;
 
 

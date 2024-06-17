@@ -6,7 +6,7 @@ use std::{fmt::Debug, ops::RangeInclusive};
 use egui::{Id, Widget};
 use egui_dock::{DockState, TabViewer};
 use serde::{Deserialize, Serialize};
-use strum::{EnumCount, IntoEnumIterator};
+use strum::IntoEnumIterator;
 use crate::modules::{gui, map};
 
 /// The settings tab for the GUI

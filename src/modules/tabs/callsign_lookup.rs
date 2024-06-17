@@ -25,7 +25,7 @@ impl Tab for CallsignLookupTab {
         "Callsign Lookup".into()
     }
 
-    fn process_event(&mut self, config: &mut GuiConfig, event: &types::Event) {
+    fn process_event(&mut self, _config: &mut GuiConfig, event: &types::Event) {
         if let types::Event::CallsignLookedUp(callsign_info) = event {
             self.callsign_info = Some(*callsign_info.clone());
         }

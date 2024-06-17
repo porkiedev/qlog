@@ -4,21 +4,18 @@
 
 
 use std::{ops::RangeInclusive, time::Duration};
-use chrono::{NaiveDate, NaiveTime, Utc};
-use egui::{widgets, Align, CursorIcon, Id, Layout, RichText, Ui, Vec2, Widget, WidgetText};
-use log::{debug, error, trace, warn};
+use egui::{Id, Ui, WidgetText};
+use log::warn;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use strum::IntoEnumIterator;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::watch;
 use crate::GuiConfig;
-use crate::callsign_lookup;
 use super::tabs::callsign_lookup::CallsignLookupTab;
 use super::tabs::contact_logger::ContactLoggerTab;
 use super::tabs::contacts::ContactTableTab;
 use super::tabs::pskreporter::PSKReporterTab;
 use super::tabs::settings::SettingsTab;
-use super::{database, types::{self, SpawnedFuture}};
+use super::types::{self, SpawnedFuture};
 
 
 /// The tab trait. This should be implemented for each tab variant
