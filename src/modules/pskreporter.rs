@@ -58,7 +58,7 @@ impl Tab for PSKReporterTab {
     }
 
     fn ui(&mut self, config: &mut crate::GuiConfig, ui: &mut egui::Ui) {
-
+        
         // Get the map widget, initializing it if it doesn't exist
         // NOTE: We use get_or_insert_with here instead of get_or_insert because it lazily initializes the map widget.
         // Using get_or_insert caused a huge performance hit, presumably because the value wasn't being lazily initialized.
@@ -126,7 +126,6 @@ impl Tab for PSKReporterTab {
         
         }
 
-
         // Render the widgets horizontally above the map
         ui.horizontal(|ui| {
 
@@ -146,7 +145,7 @@ impl Tab for PSKReporterTab {
             };
 
             // The sent_by/received_by combobox  
-            egui::ComboBox::new("sent_by_combobox", "")
+            egui::ComboBox::from_id_source("sent_by_combobox")
             .selected_text(sent_by_str)
             .show_ui(ui, |ui| {
                 // The 'sent by' option was selected
@@ -160,7 +159,7 @@ impl Tab for PSKReporterTab {
             });
 
             // The 'band' combobox
-            egui::ComboBox::new("band_combobox", "Band")
+            egui::ComboBox::from_id_source("band_combobox")
             .selected_text(self.query_options.band.as_str())
             .show_ui(ui, |ui| {
                 // Iterate through the band options and render them as selectable labels
@@ -171,7 +170,7 @@ impl Tab for PSKReporterTab {
             });
 
             // The 'mode' combobox
-            egui::ComboBox::new("mode_combobox", "Mode")
+            egui::ComboBox::from_id_source("mode_combobox")
             .selected_text(self.query_options.mode.as_str())
             .show_ui(ui, |ui| {
                 // Iterate through the mode options and render them as selectable labels
@@ -182,7 +181,7 @@ impl Tab for PSKReporterTab {
             });
 
             // The `last` combobox
-            egui::ComboBox::new("last_combobox", "Last")
+            egui::ComboBox::from_id_source("last_combobox")
             .selected_text(self.query_options.last.as_str())
             .show_ui(ui, |ui| {
                 // Iterate through the last duration options and render them as selectable labels

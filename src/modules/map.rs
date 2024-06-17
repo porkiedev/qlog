@@ -95,7 +95,6 @@ impl<T: MapMarkerTrait> MapWidget<T> {
 
     /// Returns the location of the center of the map
     fn get_center_location(&self) -> Coord {
-        let _span = tracy_client::span!("get_center_location");
 
         // Calculate the on-screen size of a tile
         let tile_size = {
@@ -674,7 +673,6 @@ impl<T: MapMarkerTrait> MapOverlayManager<T> {
     }
 
     fn update_overlay(&mut self, map_rect: egui::Rect, geo_rect: geo::Rect<f64>, focused_marker: Option<&FocusedMarker>, config: &mut GuiConfig) {
-        let _span = tracy_client::span!("Update overlay");
 
         // Get the width and height of the map rect
         let width = map_rect.width() as usize;
