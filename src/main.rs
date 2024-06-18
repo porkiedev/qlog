@@ -2,6 +2,7 @@
 #![feature(hash_extract_if)]
 #![feature(extract_if)]
 #![feature(div_duration)]
+#![feature(option_take_if)]
 
 mod modules;
 use std::{env::current_exe, fs, io::ErrorKind, time::{Duration, Instant}};

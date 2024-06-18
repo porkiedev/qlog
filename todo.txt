@@ -49,4 +49,8 @@ Project ideals:
 
 TODOs:
     1. Show the duration of a contact in the contact table
-    2. Optimize the contact table by only querying for the visible rows
+    2. Migrate existing tabs to use poll-promise instead of a shared task queue
+    3. Optimize the contact table by only querying once at a time. Perhaps we can use a bool to indicate if we need to query the database again
+    4. Fix contact table sorting buttons. They don't yet comply with the performance improvements
+    5. Optimize the contact table by maintaining a local cache of not just the visible rows, but the surrounding rows as well (+/- 64 rows perhaps).
+        This should reduce the number of queries we need to make to the database

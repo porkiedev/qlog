@@ -1,15 +1,17 @@
 use chrono::{NaiveDate, NaiveTime};
+use poll_promise::Promise;
 use serde::{Deserialize, Serialize};
 use egui::{widgets, Align, CursorIcon, Id, Layout, RichText, Ui, Widget, WidgetText};
-use log::{debug, trace};
+use log::{debug, error, trace};
 use strum::IntoEnumIterator;
+use anyhow::Result;
 use crate::modules::gui::{add_task_to_queue, frequency_formatter, frequency_parser, generate_random_id, power_formatter, power_parser, Tab};
-use crate::{types, GuiConfig};
+use crate::{types, GuiConfig, RT};
 use crate::database;
 
 
 /// The contact table tab
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct ContactTableTab {
     /// The egui ID
@@ -29,7 +31,18 @@ pub struct ContactTableTab {
     date_str: String,
     /// The time string used when editing a time column on a contact
     #[serde(skip)]
-    time_str: String
+    time_str: String,
+    /// The index of the first visible row when the table was last rendered
+    last_first_row_idx: Option<usize>,
+    /// The index of the last visible row when the table was last rendered
+    last_last_row_idx: usize,
+    /// The task that is currently running to query the database
+    #[serde(skip)]
+    query_task: Option<Promise<Result<Vec<types::Contact>>>>,
+    /// A flag to indicate if we should query the database again.
+    /// This is used instead of a queue so we only query the database once at a time, but we can still ensure we have the latest data.
+    #[serde(skip)]
+    should_query: bool
 }
 impl Tab for ContactTableTab {
 
@@ -52,7 +65,7 @@ impl Tab for ContactTableTab {
         // Load contacts from the database
         add_task_to_queue(
             &mut config.tasks,
-            config.db_api.get_contacts(0, self.sort_column, Some(self.sort_dir)),
+            config.db_api.get_contacts(0, None, self.sort_column, Some(self.sort_dir)),
             Some(self.id)
         );
     }
@@ -64,7 +77,7 @@ impl Tab for ContactTableTab {
             types::Event::AddedContact(_contact) => {
                 add_task_to_queue(
                     &mut config.tasks,
-                    config.db_api.get_contacts(0, self.sort_column, Some(self.sort_dir)),
+                    config.db_api.get_contacts(0, None, self.sort_column, Some(self.sort_dir)),
                     Some(self.id)
                 );
             },
@@ -75,7 +88,7 @@ impl Tab for ContactTableTab {
             types::Event::UpdatedContact(_contact) => {
                 add_task_to_queue(
                     &mut config.tasks,
-                    config.db_api.get_contacts(0, self.sort_column, Some(self.sort_dir)),
+                    config.db_api.get_contacts(0, None, self.sort_column, Some(self.sort_dir)),
                     Some(self.id)
                 );
             }
@@ -96,10 +109,27 @@ impl Tab for ContactTableTab {
 
     fn ui(&mut self, config: &mut GuiConfig, ui: &mut Ui) {
         use egui_extras::Column;
+        
+        // If we finished query the database, process the response
+        if let Some(promise) = self.query_task.take_if(|t| t.ready().is_some()) {
+            // Take the query result
+            match promise.block_and_take() {
+                Ok(contacts) => {
+                    // Update the contacts vec
+                    self.contacts = contacts;
+                },
+                Err(err) => error!("Failed to query the database for contacts: {err}")
+            }
+        }
 
         // Enforce a minimum width for the tab. The tab will automatically add horizontal scrollbars if the window is too small.
         // This stops us from making the table unreasonably small.
         ui.set_min_width(300.0);
+
+        let total_rows = config.db_api.get_contacts_metadata().unwrap().n_contacts;
+
+        ui.label(format!("N Visible Contacts: {}", self.contacts.len()));
+        ui.label(format!("N Total Contacts: {}", total_rows));
 
         egui_extras::TableBuilder::new(ui)
         .columns(Column::initial(50.0).at_least(50.0), 1) // Callsign
@@ -113,7 +143,8 @@ impl Tab for ContactTableTab {
         .cell_layout(Layout::top_down(Align::Center))
         .resizable(true)
         .striped(true)
-        .min_scrolled_height(20.0).sense(egui::Sense::click())
+        .min_scrolled_height(20.0)
+        .sense(egui::Sense::click())
         .header(20.0, |mut header| {
 
             // Iterate through each viewable column and render it
@@ -164,7 +195,7 @@ impl Tab for ContactTableTab {
                     // Update the table now that our sort state changed
                     add_task_to_queue(
                         &mut config.tasks,
-                        config.db_api.get_contacts(0, self.sort_column, Some(self.sort_dir)),
+                        config.db_api.get_contacts(0, None, self.sort_column, Some(self.sort_dir)),
                         Some(self.id)
                     );
 
@@ -174,11 +205,22 @@ impl Tab for ContactTableTab {
 
         }).body(|body| {
 
+            let mut first_row_idx = None;
+            let mut last_row_idx = 0;
+
             // Create a new row for each contact
-            body.rows(20.0, self.contacts.len(), |mut row| {
+            body.rows(20.0, total_rows, |mut row| {
 
                 // Get the index of this row
                 let row_index = row.index();
+
+                // Update the first and last row indices
+                if first_row_idx.is_none() {
+                    first_row_idx = Some(row_index);
+                }
+                last_row_idx = row_index;
+
+                let row_index = row_index - first_row_idx.unwrap_or(0);
 
                 // Get the contact that this row belongs to
                 let contact = match self.contacts.get_mut(row_index) {
@@ -730,7 +772,38 @@ impl Tab for ContactTableTab {
 
             });
     
+            // Update the contacts vector to only contain the visible contacts
+            if let Some(first_row_idx) = first_row_idx {
+
+                // The first row index hasn't changed, so don't update the contacts vector
+                if self.last_first_row_idx.is_some_and(|i| i == first_row_idx) && self.last_last_row_idx == last_row_idx {
+                    return;
+                }
+
+                debug!("First row index has changed: {}", first_row_idx);
+                let n_rows = last_row_idx.saturating_sub(first_row_idx) + 1;
+                
+                // Update the table
+                self.should_query = true;
+
+            }
+
+            // Update the first and last row indices
+            self.last_first_row_idx = first_row_idx;
+            self.last_last_row_idx = last_row_idx;
+
         });
+
+        // If we should be querying the database, do so
+        if self.should_query && self.query_task.is_none() {
+            // Set the should query flag to false
+            self.should_query = false;
+            let _eg = RT.enter();
+            // Get the number of visible rows
+            let n_rows = self.last_last_row_idx.saturating_sub(self.last_first_row_idx.unwrap_or(0)) + 1;
+            // Query the database
+            self.query_task = Some(config.db_api.get_contacts_promise(self.last_first_row_idx.unwrap_or(0), Some(n_rows), self.sort_column, Some(self.sort_dir)));
+        }
 
     }
 
@@ -744,7 +817,26 @@ impl Default for ContactTableTab {
             sort_dir: Default::default(),
             editing_column: Default::default(),
             date_str: Default::default(),
-            time_str: Default::default()
+            time_str: Default::default(),
+            last_first_row_idx: Default::default(),
+            last_last_row_idx: Default::default(),
+            query_task: Default::default(),
+            should_query: true
         }
+    }
+}
+impl std::fmt::Debug for ContactTableTab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContactTableTab")
+        .field("id", &self.id)
+        .field("contacts", &self.contacts)
+        .field("sort_column", &self.sort_column)
+        .field("sort_dir", &self.sort_dir)
+        .field("editing_column", &self.editing_column)
+        .field("date_str", &self.date_str)
+        .field("time_str", &self.time_str)
+        .field("last_first_row_idx", &self.last_first_row_idx)
+        .field("last_last_row_idx", &self.last_last_row_idx)
+        .finish()
     }
 }

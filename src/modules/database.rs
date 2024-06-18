@@ -3,14 +3,14 @@
 //
 
 
-use std::{env::current_exe, future::IntoFuture, time::Duration};
+use std::{env::current_exe, future::IntoFuture, sync::{atomic::{AtomicBool, Ordering::SeqCst}, Arc}, time::Duration};
 use lazy_static::lazy_static;
 use log::{debug, error, info};
+use poll_promise::Promise;
 use serde::{Deserialize, Serialize};
-use surrealdb::{engine::any::Any, opt::auth::Root, sql::{self, statements}, Surreal};
+use surrealdb::{engine::any::Any, opt::{auth::Root, IntoQuery}, sql::{self, statements, Field, Thing, Value}, Surreal};
 use tokio::runtime::Handle;
 use crate::RT;
-
 use super::types::{self, Event, SpawnedFuture};
 use thiserror::Error;
 use anyhow::{Context, Result};
@@ -21,12 +21,41 @@ const DB_FOLDER: &str = "db";
 const DB_NAMESPACE: &str = "primary";
 /// The name for the contacts database
 const DB_CONTACTS: &str = "contacts";
+/// The name for the metadata table
+const TABLE_METADATA: &str = "metadata";
 /// The name for the table that contains all of the logged radio contacts
 const TABLE_CONTACT: &str = "contact";
 
+lazy_static! {
+    /// The metadata for the contact table
+    static ref METADATA_CONTACT: Thing = Thing { tb: TABLE_METADATA.into(), id: "contact".into() };
+
+    /// The statement that increments the number of contacts in the metadata table
+    static ref STATEMENT_INCREMENT_N_CONTACTS: sql::Statement = sql::Statement::Update(statements::UpdateStatement {
+        what: sql::Values(vec![sql::Value::Thing(METADATA_CONTACT.clone())]),
+        data: Some(sql::Data::SetExpression(vec![(
+            sql::idiom("n_contacts").unwrap(),
+            sql::Operator::Inc,
+            sql::Value::Number(sql::Number::Int(1))
+        )])),
+        ..Default::default()
+    });
+
+    /// The statement that decrements the number of contacts in the metadata table
+    static ref STATEMENT_DECREMENT_N_CONTACTS: sql::Statement = sql::Statement::Update(statements::UpdateStatement {
+        what: sql::Values(vec![sql::Value::Thing(METADATA_CONTACT.clone())]),
+        data: Some(sql::Data::SetExpression(vec![(
+            sql::idiom("n_contacts").unwrap(),
+            sql::Operator::Dec,
+            sql::Value::Number(sql::Number::Int(1))
+        )])),
+        ..Default::default()
+    });
+}
+
 /// The default record limit to be returned from the database.
-/// 10k is a very generous limit and I advise that you avoid reaching it in the first place.
-const DEFAULT_RECORD_LIMIT: usize = 10_000;
+/// 1k is a very generous limit and I advise that you avoid reaching it in the first place.
+const DEFAULT_RECORD_LIMIT: usize = 1_000;
 
 
 /// The interface to the database. This should be created only once, and shared with every tab in the GUI.
@@ -35,7 +64,12 @@ const DEFAULT_RECORD_LIMIT: usize = 10_000;
 /// - NOTE: The functions are blocking, so complicated queries may freeze the GUI. This may change in the future.
 #[derive(Debug)]
 pub struct DatabaseInterface {
-    db: Surreal<Any>
+    /// The database connection
+    db: Surreal<Any>,
+    /// The metadata for the contacts table
+    contacts_metadata: ContactsTableMetadata,
+    /// A flag to indicate if the contacts metadata has changed. This allows us to be immediate-safe and only query the database for metadata when it has changed.
+    contacts_metadata_changed: Arc<AtomicBool>
 }
 impl DatabaseInterface {
     /// Connects to a database
@@ -67,8 +101,13 @@ impl DatabaseInterface {
         // Connect to the database
         let db = RT.block_on(Self::connect_to_db(endpoint, credentials))?;
 
+        // Get the metadata for the contacts table
+        let contacts_table_metadata = Self::init_contacts_table_metadata(&db)?;
+
         Ok(Self {
-            db
+            db,
+            contacts_metadata: contacts_table_metadata,
+            contacts_metadata_changed: Arc::new(AtomicBool::new(false))
         })
     }
 
@@ -115,25 +154,56 @@ impl DatabaseInterface {
         })
     }
 
+    /// Returns the contact table metadata record if it already exists, otherwise returns an empty record.
+    fn init_contacts_table_metadata(db: &Surreal<Any>) -> Result<ContactsTableMetadata> {
+        RT.block_on(async move {
+
+            // Select the contact metadata record
+            let stmt = statements::SelectStatement {
+                expr: sql::Fields(vec![Field::All], false),
+                what: sql::Values(vec![Value::Thing(METADATA_CONTACT.clone())]),
+                ..Default::default()
+            };
+
+            // Execute the query
+            let response = db.query(stmt).await?.take::<Option<ContactsTableMetadata>>(0)?;
+
+            // Return the metadata if it already exists, otherwise return an empty metadata record
+            Ok(response.unwrap_or_default())
+
+        })
+    }
+
     /// Inserts a contact into the contacts table
     /// 
     /// If the insert was successful, this function returns the contact that was just inserted.
     pub fn insert_contact(&self, contact: types::Contact) -> SpawnedFuture {
         let db = self.db.clone();
+        let contacts_metadata_changed = self.contacts_metadata_changed.clone();
         RT.spawn(async move {
-                
-            // Create the create statement (create inception!)
-            let stmt = statements::CreateStatement {
-                what: sql::Values(vec![sql::Table(TABLE_CONTACT.into()).into()]),
-                data: Some(sql::Data::ContentExpression(sql::to_value(&contact).unwrap())),
-                ..Default::default()
-            };
+            
+            // Create the query
+            // This is a transaction that inserts the contact into the database, and then increments the number of contacts in the metadata table.
+            // If anything fails, everything is rolled back.
+            let query = sql::Query(sql::Statements(vec![
+                sql::Statement::Begin(Default::default()),
+                sql::Statement::Create(sql::statements::CreateStatement {
+                    what: sql::Values(vec![sql::Table(TABLE_CONTACT.into()).into()]),
+                    data: Some(sql::Data::ContentExpression(sql::to_value(&contact).unwrap())),
+                    ..Default::default()
+                }),
+                STATEMENT_INCREMENT_N_CONTACTS.clone(),
+                sql::Statement::Commit(Default::default())
+            ]));
 
             // Execute the database query with a 1 second timeout
-            let response: Option<types::Contact> = execute_query_single(db.query(stmt), Duration::from_secs(1)).await?;
+            let response: Option<types::Contact> = execute_query_single(db.query(query), Duration::from_secs(1)).await?;
 
             // Get the contact and ensure the database response wasn't empty
             let contact = response.ok_or(DatabaseError::EmptyResponse)?;
+            
+            // Mark the metadata as changed
+            contacts_metadata_changed.store(true, SeqCst);
 
             // Return the added contact event
             Ok(Event::AddedContact(contact.into()))
@@ -176,21 +246,32 @@ impl DatabaseInterface {
     /// If the removal was successful, this function returns the contact that was just removed.
     pub fn delete_contact(&self, id: sql::Id) -> SpawnedFuture {
         let db = self.db.clone();
+        let contacts_metadata_changed = self.contacts_metadata_changed.clone();
         RT.spawn(async move {
 
-            // Create the delete statement
-            let stmt = statements::DeleteStatement {
-                what: sql::Values(vec![sql::Thing { tb: TABLE_CONTACT.into(), id: id.clone() }.into()]),
-                only: true,
-                output: Some(sql::Output::Before),
-                ..Default::default()
-            };
+            // Create the delete query
+            // This is a transaction that deletes the contact from the database, and then decrements the number of contacts in the metadata table.
+            // If anything fails, everything is rolled back.
+            let query = sql::Query(sql::Statements(vec![
+                sql::Statement::Begin(Default::default()),
+                sql::Statement::Delete(statements::DeleteStatement {
+                    what: sql::Values(vec![sql::Thing { tb: TABLE_CONTACT.into(), id: id.clone() }.into()]),
+                    only: true,
+                    output: Some(sql::Output::Before),
+                    ..Default::default()
+                }),
+                STATEMENT_DECREMENT_N_CONTACTS.clone(),
+                sql::Statement::Commit(Default::default()),
+            ]));
 
             // Execute the query
-            let response: Option<types::Contact> = execute_query_single(db.query(stmt), Duration::from_secs(1)).await?;
+            let response: Option<types::Contact> = execute_query_single(db.query(query), Duration::from_secs(1)).await?;
 
             // Get the deleted contact and ensure the database response wasn't empty
             let contact = response.ok_or(DatabaseError::DoesNotExist)?;
+
+            // Mark the metadata as changed
+            contacts_metadata_changed.store(true, SeqCst);
 
             // Return the deleted contact event
             Ok(Event::DeletedContact(contact.into()))
@@ -203,6 +284,7 @@ impl DatabaseInterface {
     /// If the removal was successful, this function returns the contacts that were just removed.
     pub fn delete_contacts(&self, ids: Vec<sql::Id>) -> SpawnedFuture {
         let db = self.db.clone();
+        let contacts_metadata_changed = self.contacts_metadata_changed.clone();
         RT.spawn(async move {
 
             // Parse the provided ids into table records
@@ -210,28 +292,97 @@ impl DatabaseInterface {
             for id in ids {
                 records.push(sql::Thing { tb: TABLE_CONTACT.into(), id }.into());
             }
+            let n_records = records.len() as i64;
 
-            // Create the delete statement
-            let stmt = statements::DeleteStatement {
-                what: sql::Values(records),
-                output: Some(sql::Output::Before),
-                ..Default::default()
-            };
+            // Create the delete query
+            // This is a transaction that deletes the contacts from the database, and then decrements the number of contacts in the metadata table.
+            // If anything fails, everything is rolled back.
+            let query = sql::Query(sql::Statements(vec![
+                sql::Statement::Begin(Default::default()),
+                sql::Statement::Delete(statements::DeleteStatement {
+                    what: sql::Values(records),
+                    output: Some(sql::Output::Before),
+                    ..Default::default()
+                }),
+                sql::Statement::Update(statements::UpdateStatement {
+                    what: sql::Values(vec![sql::Value::Thing(METADATA_CONTACT.clone())]),
+                    data: Some(sql::Data::SetExpression(vec![(
+                        sql::idiom("n_contacts").unwrap(),
+                        sql::Operator::Dec,
+                        sql::Value::Number(sql::Number::Int(n_records))
+                    )])),
+                    ..Default::default()
+                }),
+                sql::Statement::Commit(Default::default()),
+            ]));
 
             // Execute the query
-            let response = execute_query(db.query(stmt), Duration::from_secs(1)).await?;
+            let response = execute_query(db.query(query), Duration::from_secs(1)).await?;
+
+            // Mark the metadata as changed
+            contacts_metadata_changed.store(true, SeqCst);
 
             // Return the deleted contacts event
             Ok(Event::DeletedContacts(response))
         })
     }
 
+    pub fn get_contacts_promise(&self, start_at: usize, limit: Option<usize>, sort_col: Option<ContactTableColumn>, sort_dir: Option<ColumnSortDirection>) -> Promise<Result<Vec<types::Contact>>> {
+        let db = self.db.clone();
+        let _eg = RT.enter();
+        Promise::spawn_async(async move {
+            
+            // Initialize the `ORDER BY` columns vec
+            let mut orders = Vec::new();
+
+            // The user specified a column to sort by
+            if let Some(sort_col) = sort_col {
+
+                // Create a sort order with the provided column and sort direction, if the user provided a sort direction
+                orders.push(sql::Order {
+                    order: sort_col.as_idiom(),
+                    direction: match sort_dir {
+                        Some(d) => d == ColumnSortDirection::Ascending,
+                        None => false
+                    },
+                    ..Default::default()
+                });
+
+            }
+            // The user didn't specify a column to sort by, so use default sorting scheme
+            else {
+                orders.push(CALLSIGN_SORT.clone());
+                orders.push(DATE_SORT.clone());
+                orders.push(TIME_SORT.clone());
+            }
+
+            // Create the sql statement
+            // The sql statement should be something like; SELECT * FROM contact ORDER BY callsign, date, time LIMIT 10000 START 0
+            let stmt = statements::SelectStatement {
+                expr: sql::Fields(vec![sql::Field::All], false),
+                what: sql::Values(vec![sql::Table(TABLE_CONTACT.into()).into()]),
+                order: Some(sql::Orders(orders)),
+                limit: Some(sql::Limit(limit.unwrap_or(DEFAULT_RECORD_LIMIT).into())),
+                start: Some(sql::Start(start_at.into())),
+                ..Default::default()
+            };
+
+            // Execute the query
+            let response = execute_query(db.query(stmt), Duration::from_secs(1)).await?;
+
+            // Return the got contacts event
+            Ok(response)
+
+        })
+    }
+
     /// Get contacts from the contacts table
     /// 
     /// 1. `start_at` is the row that the database should start its query at. In most cases, this should be 0.
-    /// 2. `sort_col` can be used to order the rows based on a specific column.
-    /// 3. `sort_dir` can be used to change which direction the column should be ordered in.
-    pub fn get_contacts(&self, start_at: usize, sort_col: Option<ContactTableColumn>, sort_dir: Option<ColumnSortDirection>) -> SpawnedFuture {
+    /// 2. `limit` is the maximum number of rows to return. If this is `None`, the default limit will be used.
+    /// 3. `sort_col` can be used to order the rows based on a specific column.
+    /// 4. `sort_dir` can be used to change which direction the column should be ordered in.
+    pub fn get_contacts(&self, start_at: usize, limit: Option<usize>, sort_col: Option<ContactTableColumn>, sort_dir: Option<ColumnSortDirection>) -> SpawnedFuture {
         let db = self.db.clone();
         RT.spawn(async move {
             
@@ -265,7 +416,7 @@ impl DatabaseInterface {
                 expr: sql::Fields(vec![sql::Field::All], false),
                 what: sql::Values(vec![sql::Table(TABLE_CONTACT.into()).into()]),
                 order: Some(sql::Orders(orders)),
-                limit: Some(sql::Limit(DEFAULT_RECORD_LIMIT.into())),
+                limit: Some(sql::Limit(limit.unwrap_or(DEFAULT_RECORD_LIMIT).into())),
                 start: Some(sql::Start(start_at.into())),
                 ..Default::default()
             };
@@ -277,6 +428,20 @@ impl DatabaseInterface {
             Ok(Event::GotContacts(response))
 
         })
+    }
+
+    /// Returns the metadata about the contacts table
+    pub fn get_contacts_metadata(&mut self) -> Result<&ContactsTableMetadata> {
+        // If the metadata has changed, query the database for the new metadata
+        if self.contacts_metadata_changed.load(SeqCst) {
+            // Query the database for the new metadata
+            self.contacts_metadata = Self::init_contacts_table_metadata(&self.db)?;
+            // Reset the metadata changed flag
+            self.contacts_metadata_changed.store(false, SeqCst);
+        }
+
+        // Return the metadata
+        Ok(&self.contacts_metadata)
     }
 }
 
@@ -422,6 +587,14 @@ impl ContactTableColumn {
             ContactTableColumn::Note => false,
         }
     }
+}
+
+/// Contains metadata about the contacts table
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ContactsTableMetadata {
+    /// The number of records in the contacts table
+    pub n_contacts: usize
 }
 
 /// Errors regarding the database module
