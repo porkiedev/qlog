@@ -19,6 +19,9 @@ pub struct ContactTableTab {
     /// The contacts that are shown in the contact table
     #[serde(skip)]
     contacts: Vec<types::Contact>,
+    /// The index of the first row in the contacts vec
+    #[serde(skip)]
+    contacts_offset: usize,
     /// The current column to sort the contacts by
     sort_column: Option<database::ContactTableColumn>,
     /// The current direction to sort the contacts in
@@ -32,13 +35,13 @@ pub struct ContactTableTab {
     /// The time string used when editing a time column on a contact
     #[serde(skip)]
     time_str: String,
-    /// The index of the first visible row when the table was last rendered
-    last_first_row_idx: Option<usize>,
-    /// The index of the last visible row when the table was last rendered
-    last_last_row_idx: usize,
+    /// The index of the last visible row when the database was last queried
+    last_row_idx: usize,
+    // TODO: Document this
+    offset: usize,
     /// The task that is currently running to query the database
     #[serde(skip)]
-    query_task: Option<Promise<Result<Vec<types::Contact>>>>,
+    query_task: Option<(usize, Promise<Result<Vec<types::Contact>>>)>,
     /// A flag to indicate if we should query the database again.
     /// This is used instead of a queue so we only query the database once at a time, but we can still ensure we have the latest data.
     #[serde(skip)]
@@ -56,18 +59,6 @@ impl Tab for ContactTableTab {
 
     fn scroll_bars(&self) -> [bool; 2] {
         [true, false]
-    }
-
-    // Load contacts from database on initialization
-    fn init(&mut self, config: &mut GuiConfig) {
-        trace!("[ContactTableTab] Initializing table");
-
-        // Load contacts from the database
-        add_task_to_queue(
-            &mut config.tasks,
-            config.db_api.get_contacts(0, None, self.sort_column, Some(self.sort_dir)),
-            Some(self.id)
-        );
     }
 
     fn process_event(&mut self, config: &mut GuiConfig, event: &types::Event) {
@@ -111,12 +102,14 @@ impl Tab for ContactTableTab {
         use egui_extras::Column;
         
         // If we finished query the database, process the response
-        if let Some(promise) = self.query_task.take_if(|t| t.ready().is_some()) {
+        if let Some((offset, promise)) = self.query_task.take_if(|(_, t)| t.ready().is_some()) {
             // Take the query result
             match promise.block_and_take() {
                 Ok(contacts) => {
                     // Update the contacts vec
                     self.contacts = contacts;
+                    // Update the index offset
+                    self.contacts_offset = offset;
                 },
                 Err(err) => error!("Failed to query the database for contacts: {err}")
             }
@@ -126,10 +119,12 @@ impl Tab for ContactTableTab {
         // This stops us from making the table unreasonably small.
         ui.set_min_width(300.0);
 
+        // Get the total number of contacts in the database
         let total_rows = config.db_api.get_contacts_metadata().unwrap().n_contacts;
 
-        ui.label(format!("N Visible Contacts: {}", self.contacts.len()));
-        ui.label(format!("N Total Contacts: {}", total_rows));
+        // The index of the first and last visible row
+        let mut first_row_idx = None;
+        let mut last_row_idx = 0;
 
         egui_extras::TableBuilder::new(ui)
         .columns(Column::initial(50.0).at_least(50.0), 1) // Callsign
@@ -193,11 +188,7 @@ impl Tab for ContactTableTab {
                     }
     
                     // Update the table now that our sort state changed
-                    add_task_to_queue(
-                        &mut config.tasks,
-                        config.db_api.get_contacts(0, None, self.sort_column, Some(self.sort_dir)),
-                        Some(self.id)
-                    );
+                    self.should_query = true;
 
                 }
 
@@ -205,34 +196,44 @@ impl Tab for ContactTableTab {
 
         }).body(|body| {
 
-            let mut first_row_idx = None;
-            let mut last_row_idx = 0;
-
             // Create a new row for each contact
             body.rows(20.0, total_rows, |mut row| {
 
-                // Get the index of this row
+                // Get the first and last row index
                 let row_index = row.index();
 
-                // Update the first and last row indices
+                // Update the first and last row index
                 if first_row_idx.is_none() {
                     first_row_idx = Some(row_index);
                 }
                 last_row_idx = row_index;
 
-                let row_index = row_index - first_row_idx.unwrap_or(0);
+                // Calculate the contacst vec index relative to the offset
+                let contacts_index = row_index.wrapping_sub(self.contacts_offset);
 
                 // Get the contact that this row belongs to
-                let contact = match self.contacts.get_mut(row_index) {
+                let contact = match self.contacts.get_mut(contacts_index) {
                     Some(c) => c,
-                    None => return
+                    None => {
+                        // Show "Loading..." for the callsign column
+                        row.col(|ui| {
+                            ui.label("Loading...");
+                        });
+
+                        // Show nothing for the remaining columns. We still call row.col() so you can still scroll with your mouse anywhere in the table.
+                        for _ in 0..9 {
+                            row.col(|ui| {});
+                        }
+
+                        return;
+                    }
                 };
 
                 // ===== CALLSIGN COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a textedit
-                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_callsign()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_callsign()) {
                         // Show a textedit widget
                         let w = widgets::TextEdit::singleline(&mut contact.callsign)
                         .horizontal_align(Align::Center)
@@ -268,14 +269,14 @@ impl Tab for ContactTableTab {
                 });
                 // The callsign column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((row_index, database::ContactTableColumn::Callsign));
+                    self.editing_column = Some((contacts_index, database::ContactTableColumn::Callsign));
                 }
                 
                 // ===== FREQUENCY COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a frequency edit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_frequency()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_frequency()) {
 
                         // Show a frequency edit widget
                         let w = widgets::DragValue::new(&mut contact.frequency)
@@ -312,14 +313,14 @@ impl Tab for ContactTableTab {
                 });
                 // The frequency column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((row_index, database::ContactTableColumn::Frequency));
+                    self.editing_column = Some((contacts_index, database::ContactTableColumn::Frequency));
                 }
 
                 // ===== MODE COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a frequency edit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_mode()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_mode()) {
 
                         // Was a button in the combobox clicked (i.e. should we save the contact)?
                         let mut saved = false;
@@ -388,14 +389,14 @@ impl Tab for ContactTableTab {
                 });
                 // The mode column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((row_index, database::ContactTableColumn::Mode));
+                    self.editing_column = Some((contacts_index, database::ContactTableColumn::Mode));
                 }
 
                 // ===== TX RST COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a textedit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_tx_rst()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_tx_rst()) {
 
                         // Show a textedit widget
                         let w = widgets::TextEdit::singleline(&mut contact.tx_rst)
@@ -435,14 +436,14 @@ impl Tab for ContactTableTab {
                 });
                 // The TX RST column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((row_index, database::ContactTableColumn::TxRst));
+                    self.editing_column = Some((contacts_index, database::ContactTableColumn::TxRst));
                 }
 
                 // ===== RX RST COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a textedit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_rx_rst()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_rx_rst()) {
 
                         // Show a textedit widget
                         let w = widgets::TextEdit::singleline(&mut contact.rx_rst)
@@ -482,14 +483,14 @@ impl Tab for ContactTableTab {
                 });
                 // The RX RST column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((row_index, database::ContactTableColumn::RxRst));
+                    self.editing_column = Some((contacts_index, database::ContactTableColumn::RxRst));
                 }
 
                 // ===== TX POWER COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a dragvalue widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_tx_pwr()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_tx_pwr()) {
 
                         // Show a dragvalue widget
                         let w = widgets::DragValue::new(&mut contact.tx_power)
@@ -529,14 +530,14 @@ impl Tab for ContactTableTab {
                 });
                 // The TX Power column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((row_index, database::ContactTableColumn::TxPwr));
+                    self.editing_column = Some((contacts_index, database::ContactTableColumn::TxPwr));
                 }
 
                 // ===== RX POWER COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a dragvalue widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_rx_pwr()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_rx_pwr()) {
 
                         // Show a dragvalue widget
                         let w = widgets::DragValue::new(&mut contact.rx_power)
@@ -576,14 +577,14 @@ impl Tab for ContactTableTab {
                 });
                 // The RX Power column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((row_index, database::ContactTableColumn::RxPwr));
+                    self.editing_column = Some((contacts_index, database::ContactTableColumn::RxPwr));
                 }
 
                 // ===== DATE COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a textedit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_date()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_date()) {
 
                         // Show a textedit widget
                         let w = widgets::TextEdit::singleline(&mut self.date_str)
@@ -626,7 +627,7 @@ impl Tab for ContactTableTab {
                 });
                 // The date column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((row_index, database::ContactTableColumn::Date));
+                    self.editing_column = Some((contacts_index, database::ContactTableColumn::Date));
 
                     // Initialize the date string with the current date of the contact
                     self.date_str = format!("{}", contact.date.format("%Y-%m-%d"));
@@ -636,7 +637,7 @@ impl Tab for ContactTableTab {
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a textedit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_time()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_time()) {
 
                         // Show a textedit widget
                         let w = widgets::TextEdit::singleline(&mut self.time_str)
@@ -679,7 +680,7 @@ impl Tab for ContactTableTab {
                 });
                 // The time column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((row_index, database::ContactTableColumn::Time));
+                    self.editing_column = Some((contacts_index, database::ContactTableColumn::Time));
 
                     // Initialize the time string with the current time of the contact
                     self.time_str = format!("{}", contact.time.format("%H:%M:%S"));
@@ -689,7 +690,7 @@ impl Tab for ContactTableTab {
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a textedit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_note()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_note()) {
 
                         // Show a textedit widget
                         let w = widgets::TextEdit::singleline(&mut contact.note)
@@ -729,7 +730,7 @@ impl Tab for ContactTableTab {
                 });
                 // The note column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((row_index, database::ContactTableColumn::Note));
+                    self.editing_column = Some((contacts_index, database::ContactTableColumn::Note));
                 }
 
                 // Get the response for the whole row
@@ -771,38 +772,32 @@ impl Tab for ContactTableTab {
                 });
 
             });
-    
-            // Update the contacts vector to only contain the visible contacts
-            if let Some(first_row_idx) = first_row_idx {
-
-                // The first row index hasn't changed, so don't update the contacts vector
-                if self.last_first_row_idx.is_some_and(|i| i == first_row_idx) && self.last_last_row_idx == last_row_idx {
-                    return;
-                }
-
-                debug!("First row index has changed: {}", first_row_idx);
-                let n_rows = last_row_idx.saturating_sub(first_row_idx) + 1;
-                
-                // Update the table
-                self.should_query = true;
-
-            }
-
-            // Update the first and last row indices
-            self.last_first_row_idx = first_row_idx;
-            self.last_last_row_idx = last_row_idx;
 
         });
 
-        // If we should be querying the database, do so
+        // Should we query the database? This is set to true if the user has scrolled or resized the table
+        self.should_query |= self.last_row_idx != last_row_idx;
+
         if self.should_query && self.query_task.is_none() {
-            // Set the should query flag to false
-            self.should_query = false;
             let _eg = RT.enter();
             // Get the number of visible rows
-            let n_rows = self.last_last_row_idx.saturating_sub(self.last_first_row_idx.unwrap_or(0)) + 1;
+            let n_rows = last_row_idx.saturating_sub(first_row_idx.unwrap()) + 1;
+
             // Query the database
-            self.query_task = Some(config.db_api.get_contacts_promise(self.last_first_row_idx.unwrap_or(0), Some(n_rows), self.sort_column, Some(self.sort_dir)));
+            self.query_task = Some((
+                first_row_idx.unwrap(),
+                config.db_api.get_contacts_promise(
+                first_row_idx.unwrap(),
+                Some(n_rows),
+                self.sort_column,
+                Some(self.sort_dir)
+            )));
+
+            // Update the last row index
+            self.last_row_idx = last_row_idx;
+
+            // Update the should query flag
+            self.should_query = false;
         }
 
     }
@@ -813,13 +808,14 @@ impl Default for ContactTableTab {
         Self {
             id: generate_random_id(),
             contacts: Default::default(),
+            contacts_offset: Default::default(),
             sort_column: Default::default(),
             sort_dir: Default::default(),
             editing_column: Default::default(),
             date_str: Default::default(),
             time_str: Default::default(),
-            last_first_row_idx: Default::default(),
-            last_last_row_idx: Default::default(),
+            last_row_idx: Default::default(),
+            offset: Default::default(),
             query_task: Default::default(),
             should_query: true
         }
@@ -835,8 +831,7 @@ impl std::fmt::Debug for ContactTableTab {
         .field("editing_column", &self.editing_column)
         .field("date_str", &self.date_str)
         .field("time_str", &self.time_str)
-        .field("last_first_row_idx", &self.last_first_row_idx)
-        .field("last_last_row_idx", &self.last_last_row_idx)
+        .field("last_last_row_idx", &self.last_row_idx)
         .finish()
     }
 }
