@@ -170,7 +170,7 @@ impl App for Gui {
                             2 => "Contact Logger",
                             3 => "Callsign Lookup",
                             4 => "PSKReporter",
-                            5.. => "Settings"
+                            5.. => "Settings",
                         };
 
                         if ui.selectable_label(false, text).clicked() {
