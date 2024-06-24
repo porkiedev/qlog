@@ -202,7 +202,7 @@ impl Tab for ContactTableTab {
                 }
                 last_row_idx = row_index;
 
-                // Calculate the contacst vec index relative to the offset
+                // Calculate the contact vec index relative to the offset
                 let contacts_index = row_index.wrapping_sub(self.contacts_offset);
 
                 // Get the contact that this row belongs to
@@ -227,7 +227,7 @@ impl Tab for ContactTableTab {
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a textedit
-                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_callsign()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_callsign()) {
                         // Show a textedit widget
                         let w = widgets::TextEdit::singleline(&mut contact.callsign)
                         .horizontal_align(Align::Center)
@@ -259,14 +259,14 @@ impl Tab for ContactTableTab {
                 });
                 // The callsign column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((contacts_index, database::ContactTableColumn::Callsign));
+                    self.editing_column = Some((row_index, database::ContactTableColumn::Callsign));
                 }
                 
                 // ===== FREQUENCY COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a frequency edit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_frequency()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_frequency()) {
 
                         // Show a frequency edit widget
                         let w = widgets::DragValue::new(&mut contact.frequency)
@@ -299,14 +299,14 @@ impl Tab for ContactTableTab {
                 });
                 // The frequency column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((contacts_index, database::ContactTableColumn::Frequency));
+                    self.editing_column = Some((row_index, database::ContactTableColumn::Frequency));
                 }
 
                 // ===== MODE COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a frequency edit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_mode()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_mode()) {
 
                         // Was a button in the combobox clicked (i.e. should we save the contact)?
                         let mut saved = false;
@@ -367,14 +367,14 @@ impl Tab for ContactTableTab {
                 });
                 // The mode column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((contacts_index, database::ContactTableColumn::Mode));
+                    self.editing_column = Some((row_index, database::ContactTableColumn::Mode));
                 }
 
                 // ===== TX RST COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a textedit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_tx_rst()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_tx_rst()) {
 
                         // Show a textedit widget
                         let w = widgets::TextEdit::singleline(&mut contact.tx_rst)
@@ -410,14 +410,14 @@ impl Tab for ContactTableTab {
                 });
                 // The TX RST column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((contacts_index, database::ContactTableColumn::TxRst));
+                    self.editing_column = Some((row_index, database::ContactTableColumn::TxRst));
                 }
 
                 // ===== RX RST COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a textedit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_rx_rst()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_rx_rst()) {
 
                         // Show a textedit widget
                         let w = widgets::TextEdit::singleline(&mut contact.rx_rst)
@@ -453,14 +453,14 @@ impl Tab for ContactTableTab {
                 });
                 // The RX RST column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((contacts_index, database::ContactTableColumn::RxRst));
+                    self.editing_column = Some((row_index, database::ContactTableColumn::RxRst));
                 }
 
                 // ===== TX POWER COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a dragvalue widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_tx_pwr()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_tx_pwr()) {
 
                         // Show a dragvalue widget
                         let w = widgets::DragValue::new(&mut contact.tx_power)
@@ -496,14 +496,14 @@ impl Tab for ContactTableTab {
                 });
                 // The TX Power column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((contacts_index, database::ContactTableColumn::TxPwr));
+                    self.editing_column = Some((row_index, database::ContactTableColumn::TxPwr));
                 }
 
                 // ===== RX POWER COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a dragvalue widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_rx_pwr()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_rx_pwr()) {
 
                         // Show a dragvalue widget
                         let w = widgets::DragValue::new(&mut contact.rx_power)
@@ -539,14 +539,14 @@ impl Tab for ContactTableTab {
                 });
                 // The RX Power column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((contacts_index, database::ContactTableColumn::RxPwr));
+                    self.editing_column = Some((row_index, database::ContactTableColumn::RxPwr));
                 }
 
                 // ===== DATE COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a textedit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_date()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_date()) {
 
                         // Show a textedit widget
                         let w = widgets::TextEdit::singleline(&mut self.date_str)
@@ -585,7 +585,7 @@ impl Tab for ContactTableTab {
                 });
                 // The date column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((contacts_index, database::ContactTableColumn::Date));
+                    self.editing_column = Some((row_index, database::ContactTableColumn::Date));
 
                     // Initialize the date string with the current date of the contact
                     self.date_str = format!("{}", contact.date.format("%Y-%m-%d"));
@@ -595,7 +595,7 @@ impl Tab for ContactTableTab {
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a textedit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_time()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_time()) {
 
                         // Show a textedit widget
                         let w = widgets::TextEdit::singleline(&mut self.time_str)
@@ -634,7 +634,7 @@ impl Tab for ContactTableTab {
                 });
                 // The time column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((contacts_index, database::ContactTableColumn::Time));
+                    self.editing_column = Some((row_index, database::ContactTableColumn::Time));
 
                     // Initialize the time string with the current time of the contact
                     self.time_str = format!("{}", contact.time.format("%H:%M:%S"));
@@ -644,7 +644,7 @@ impl Tab for ContactTableTab {
                 let (_rect, response) = row.col(|ui| {
 
                     // This column is currently being edited, show a textedit widget
-                    if self.editing_column.is_some_and(|(idx, c)| idx == contacts_index && c.is_note()) {
+                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_note()) {
 
                         // Show a textedit widget
                         let w = widgets::TextEdit::singleline(&mut contact.note)
@@ -680,7 +680,7 @@ impl Tab for ContactTableTab {
                 });
                 // The note column was double clicked; start editing the column
                 if response.double_clicked() {
-                    self.editing_column = Some((contacts_index, database::ContactTableColumn::Note));
+                    self.editing_column = Some((row_index, database::ContactTableColumn::Note));
                 }
 
                 // Get the response for the whole row

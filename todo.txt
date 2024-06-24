@@ -55,4 +55,3 @@ TODOs:
     5. Optimize the contact table by maintaining a local cache of not just the visible rows, but the surrounding rows as well (+/- 64 rows perhaps).
         This should reduce the number of queries we need to make to the database
     6. Fix contact table time sorting bug. If the start time of a contact is later than the end time, stuff gets weird.
-    7. Fix the row-editing mechnaism for the contacts table. It's inconsistent if you're scrolling up/down the in the table.
