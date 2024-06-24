@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use surrealdb::{engine::any::Any, opt::{auth::Root, IntoQuery}, sql::{self, statements, Field, Thing, Value}, Surreal};
 use tokio::runtime::Handle;
 use crate::RT;
-use super::types::{self, Event, SpawnedFuture};
+use super::types::{self, Event};
 use thiserror::Error;
 use anyhow::{Context, Result};
 
@@ -177,11 +177,12 @@ impl DatabaseInterface {
     /// Inserts a contact into the contacts table
     /// 
     /// If the insert was successful, this function returns the contact that was just inserted.
-    pub fn insert_contact(&self, contact: types::Contact) -> SpawnedFuture {
+    pub fn insert_contact_promise(&self, contact: types::Contact) -> Promise<Result<types::Contact>> {
         let db = self.db.clone();
         let contacts_metadata_changed = self.contacts_metadata_changed.clone();
-        RT.spawn(async move {
-            
+        let _eg = RT.enter();
+        Promise::spawn_async(async move {
+
             // Create the query
             // This is a transaction that inserts the contact into the database, and then increments the number of contacts in the metadata table.
             // If anything fails, everything is rolled back.
@@ -205,18 +206,19 @@ impl DatabaseInterface {
             // Mark the metadata as changed
             contacts_metadata_changed.store(true, SeqCst);
 
-            // Return the added contact event
-            Ok(Event::AddedContact(contact.into()))
+            // Return the contact that was just inserted
+            Ok(contact)
 
         })
     }
-    
+
     /// Updates a contact in the contacts table using the ID in the provided contact
     /// 
     /// If the update was successful, this function returns the contact after it was updated
-    pub fn update_contact(&self, contact: types::Contact) -> SpawnedFuture {
+    pub fn update_contact_promise(&self, contact: types::Contact) -> Promise<Result<types::Contact>> {
         let db = self.db.clone();
-        RT.spawn(async move {
+        let _eg = RT.enter();
+        Promise::spawn_async(async move {
 
             let id = contact.id.as_ref().unwrap().id.clone();
 
@@ -235,19 +237,20 @@ impl DatabaseInterface {
             // Get the updated contact and ensure the database response wasn't empty
             let contact = response.ok_or(DatabaseError::EmptyResponse)?;
 
-            // Return the updated contact event
-            Ok(Event::UpdatedContact(contact.into()))
-            
+            // Return the updated contact
+            Ok(contact)
+
         })
     }
 
     /// Deletes a contact from the contacts table
     /// 
     /// If the removal was successful, this function returns the contact that was just removed.
-    pub fn delete_contact(&self, id: sql::Id) -> SpawnedFuture {
+    pub fn delete_contact_promise(&self, id: sql::Id) -> Promise<Result<types::Contact>> {
         let db = self.db.clone();
         let contacts_metadata_changed = self.contacts_metadata_changed.clone();
-        RT.spawn(async move {
+        let _eg = RT.enter();
+        Promise::spawn_async(async move {
 
             // Create the delete query
             // This is a transaction that deletes the contact from the database, and then decrements the number of contacts in the metadata table.
@@ -273,8 +276,8 @@ impl DatabaseInterface {
             // Mark the metadata as changed
             contacts_metadata_changed.store(true, SeqCst);
 
-            // Return the deleted contact event
-            Ok(Event::DeletedContact(contact.into()))
+            // Return the deleted contact
+            Ok(contact)
 
         })
     }
@@ -282,10 +285,11 @@ impl DatabaseInterface {
     /// Deletes multiple contacts from the contacts table
     /// 
     /// If the removal was successful, this function returns the contacts that were just removed.
-    pub fn delete_contacts(&self, ids: Vec<sql::Id>) -> SpawnedFuture {
+    pub fn delete_contacts_promise(&self, ids: Vec<sql::Id>) -> Promise<Result<Vec<types::Contact>>> {
         let db = self.db.clone();
         let contacts_metadata_changed = self.contacts_metadata_changed.clone();
-        RT.spawn(async move {
+        let _eg = RT.enter();
+        Promise::spawn_async(async move {
 
             // Parse the provided ids into table records
             let mut records: Vec<sql::Value> = Vec::new();
@@ -323,10 +327,17 @@ impl DatabaseInterface {
             contacts_metadata_changed.store(true, SeqCst);
 
             // Return the deleted contacts event
-            Ok(Event::DeletedContacts(response))
+            Ok(response)
+
         })
     }
 
+    /// Get contacts from the contacts table
+    /// 
+    /// 1. `start_at` is the row that the database should start its query at. In most cases, this should be 0.
+    /// 2. `limit` is the maximum number of rows to return. If this is `None`, the default limit will be used.
+    /// 3. `sort_col` can be used to order the rows based on a specific column.
+    /// 4. `sort_dir` can be used to change which direction the column should be ordered in.
     pub fn get_contacts_promise(&self, start_at: usize, limit: Option<usize>, sort_col: Option<ContactTableColumn>, sort_dir: Option<ColumnSortDirection>) -> Promise<Result<Vec<types::Contact>>> {
         let db = self.db.clone();
         let _eg = RT.enter();
@@ -372,60 +383,6 @@ impl DatabaseInterface {
 
             // Return the got contacts event
             Ok(response)
-
-        })
-    }
-
-    /// Get contacts from the contacts table
-    /// 
-    /// 1. `start_at` is the row that the database should start its query at. In most cases, this should be 0.
-    /// 2. `limit` is the maximum number of rows to return. If this is `None`, the default limit will be used.
-    /// 3. `sort_col` can be used to order the rows based on a specific column.
-    /// 4. `sort_dir` can be used to change which direction the column should be ordered in.
-    pub fn get_contacts(&self, start_at: usize, limit: Option<usize>, sort_col: Option<ContactTableColumn>, sort_dir: Option<ColumnSortDirection>) -> SpawnedFuture {
-        let db = self.db.clone();
-        RT.spawn(async move {
-            
-            // Initialize the `ORDER BY` columns vec
-            let mut orders = Vec::new();
-
-            // The user specified a column to sort by
-            if let Some(sort_col) = sort_col {
-
-                // Create a sort order with the provided column and sort direction, if the user provided a sort direction
-                orders.push(sql::Order {
-                    order: sort_col.as_idiom(),
-                    direction: match sort_dir {
-                        Some(d) => d == ColumnSortDirection::Ascending,
-                        None => false
-                    },
-                    ..Default::default()
-                });
-
-            }
-            // The user didn't specify a column to sort by, so use default sorting scheme
-            else {
-                orders.push(CALLSIGN_SORT.clone());
-                orders.push(DATE_SORT.clone());
-                orders.push(TIME_SORT.clone());
-            }
-
-            // Create the sql statement
-            // The sql statement should be something like; SELECT * FROM contact ORDER BY callsign, date, time LIMIT 10000 START 0
-            let stmt = statements::SelectStatement {
-                expr: sql::Fields(vec![sql::Field::All], false),
-                what: sql::Values(vec![sql::Table(TABLE_CONTACT.into()).into()]),
-                order: Some(sql::Orders(orders)),
-                limit: Some(sql::Limit(limit.unwrap_or(DEFAULT_RECORD_LIMIT).into())),
-                start: Some(sql::Start(start_at.into())),
-                ..Default::default()
-            };
-
-            // Execute the query
-            let response = execute_query(db.query(stmt), Duration::from_secs(1)).await?;
-
-            // Return the got contacts event
-            Ok(Event::GotContacts(response))
 
         })
     }

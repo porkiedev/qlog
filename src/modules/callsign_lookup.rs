@@ -8,11 +8,12 @@ use anyhow::{Context, Result};
 use chrono::NaiveDate;
 use geo::Coord;
 use log::{debug, error};
+use poll_promise::Promise;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{runtime::Handle, sync::Mutex};
 use crate::RT;
-use super::super::types::{Event, SpawnedFuture};
+use super::types::{self, Event};
 
 
 const PROGRAM_NAME: &str = env!("CARGO_PKG_NAME");
@@ -123,26 +124,31 @@ impl CallsignLookup {
         Ok(serde_xml_rs::from_str::<HamQTHResponseWrapper>(&response).context("Failed to query HamQTH API")?.inner.to_callsign_information())
     }
 
-    pub fn lookup_callsign(&mut self, callsign: impl ToString) -> SpawnedFuture {
+    /// Queries the HamDB/HamQTH API about the provided callsign
+    pub fn lookup_callsign_promise(&self, callsign: impl ToString) -> Promise<Result<CallsignInformation>> {
         let callsign = callsign.to_string();
         let credentials = self.credentials.clone();
         let hamqth_id = self.hamqth_id.clone();
 
-        RT.spawn(async move {
+        let _eg = RT.enter();
+        Promise::spawn_async(async move {
 
             // Query the HamDB API first
             let hamdb_query = Self::query_hamdb(callsign.clone()).await;
 
             // If HamDB gave the response we wanted, return it, otherwise try again with HamQTH
             if let Ok(callsign_info) = hamdb_query {
-                return Ok(Event::CallsignLookedUp(Box::new(callsign_info)));
+                return Ok(callsign_info);
             }
 
             debug!("HamDB query failed, retrying with HamQTH:\n{hamdb_query:?}");
 
             // Get the session HamQTH ID and then query the API with that ID
             let session_id = Self::get_hamqth_session_id(credentials, hamqth_id).await?;
-            Ok(Event::CallsignLookedUp(Box::new(Self::query_hamqth(callsign, session_id).await?)))
+            let callsign_info = Self::query_hamqth(callsign, session_id).await?;
+
+            // Return the callsign information
+            Ok(callsign_info)
 
         })
     }

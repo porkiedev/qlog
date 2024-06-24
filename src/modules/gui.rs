@@ -15,7 +15,7 @@ use super::tabs::contact_logger::ContactLoggerTab;
 use super::tabs::contacts::ContactTableTab;
 use super::tabs::pskreporter::PSKReporterTab;
 use super::tabs::settings::SettingsTab;
-use super::types::{self, SpawnedFuture};
+use super::types;
 
 
 /// The tab trait. This should be implemented for each tab variant
@@ -264,13 +264,6 @@ pub fn frequency_parser(input: &str) -> Option<f64> {
 pub fn generate_random_id() -> Id {
     // Generate a new random ID
     Id::new(rand::thread_rng().next_u64())
-}
-
-/// A convenience function to add an async task to a task queue.
-/// 
-/// If `id` is provided, the task result will be bound to the GUI tab with that ID, and only that tab will receive the resulting value.
-pub fn add_task_to_queue(queue: &mut Vec<(Option<Id>, SpawnedFuture)>, task: SpawnedFuture, id: Option<Id>) {
-    queue.push((id, task));
 }
 
 /// A simple timer that sends a message (`true`) on the provided channel every [Duration] until the receiver is dropped

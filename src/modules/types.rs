@@ -82,24 +82,16 @@ pub enum Notification {
     Error(String),
 }
 
-/// An event that is made visible to every tab in the GUI.
+/// An event or request that is sent to every tab in the GUI.
 /// 
 /// This is typically used to synchronize multiple tabs. For example, if you insert a contact into the database,
-/// the contact table tab should also be made aware of the change so it can update itself without querying the database again.
+/// the contact table tab should also be made aware of the change so it can update itself.
 #[derive(Debug)]
 pub enum Event {
-    /// A contact was added to the database
-    AddedContact(Box<Contact>),
-    /// Contacts were fetched from the database
-    GotContacts(Vec<Contact>),
-    /// A contact in the database was updated
-    UpdatedContact(Box<Contact>),
-    /// A contact was deleted from the database
-    DeletedContact(Box<Contact>),
-    /// Multiple contacts were deleted from the database
-    DeletedContacts(Vec<Contact>),
-    /// A contact was looked up
-    CallsignLookedUp(Box<CallsignInformation>)
+    /// Refresh the contacts table
+    RefreshContacts,
+    /// Search for a callsign
+    LookupCallsign(String),
 }
 
 /// The distance unit used by the GUI
@@ -117,12 +109,6 @@ impl DistanceUnit {
         }
     }
 }
-
-/// The result of a task spawned on the tokio runtime.
-/// 
-/// The spawned future should be pushed onto the GUI task queue.
-/// The GUI will check for completed futures serially and send update events out to the corresponding tabs.
-pub type SpawnedFuture = JoinHandle<Result<Event>>;
 
 /// Converts a value from one range into a value in another range
 /// 

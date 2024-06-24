@@ -100,53 +100,27 @@ impl App for Gui {
         // Get a mutable reference to the gui config
         let config = &mut self.tab_viewer.config;
 
-        // A bool used to draw a spinner if there are any pending background tasks
-        let mut pending_tasks = false;
+        // Check the events queue and send out the necessary events
+        while let Some((task_tab_id, event)) = config.events.pop() {
 
-        // Check the async task queue and send out and necessary events
-        // Note that tasks are processed sequentially, so all tasks should have timeouts on them,
-        // because one long-running task will delay all of the other tasks
-        while let Some((task_tab_id, task)) = config.tasks.first_mut() {
+            // The task is bound to a specific tab
+            if let Some(task_tab_id) = task_tab_id {
 
-            // The task is finished
-            if task.is_finished() {
-                match RT.block_on(task).unwrap() {
-                    Ok(event) => {
-
-                        // The task is bound to a specific tab
-                        if let Some(task_tab_id) = *task_tab_id {
-
-                            // Filter for the tab with a matching ID
-                            if let Some((_, tab)) = self.dock_state.iter_all_tabs_mut()
-                            .find(|(_, tab)| tab.id() == task_tab_id) {
-                                tab.process_event(config, &event);
-                            }
-
-                        }
-                        // The task is global
-                        else {
-
-                            // Send the event to every tab
-                            for (_, tab) in self.dock_state.iter_all_tabs_mut() {
-                                tab.process_event(config, &event);
-                            }
-
-                        }
-
-                    },
-                    Err(err) => {
-                        config.notifications.push(types::Notification::Error(err.to_string()));
-                        config.notification_read = false;
-                    }
+                // Filter for the tab with a matching ID
+                if let Some((_, tab)) = self.dock_state.iter_all_tabs_mut()
+                .find(|(_, tab)| tab.id() == task_tab_id) {
+                    tab.process_event(config, &event);
                 }
 
-                // Since the task is complete, remove it from the queue
-                config.tasks.remove(0);
             }
-            // The task is not finished yet so wait to check next frame
+            // The task is global
             else {
-                pending_tasks = true;
-                break;
+
+                // Send the event to every tab
+                for (_, tab) in self.dock_state.iter_all_tabs_mut() {
+                    tab.process_event(config, &event);
+                }
+
             }
 
         }
@@ -186,12 +160,7 @@ impl App for Gui {
                     }
 
                 });
-
-                // If there are pending tasks (i.e. tasks running in the background), show a spinner
-                if pending_tasks {
-                    widgets::Spinner::new().ui(ui);
-                }
-
+                
                 ui.label(format!("FPS: {}", config.fps_counter.tick()));
 
                 // Limit the number of notifications to 32
@@ -368,10 +337,12 @@ pub struct GuiConfig {
     /// Has the latest notification been read? If true, the latest notification is hidden.
     #[serde(skip)]
     notification_read: bool,
-    /// Async tasks. If an ID is provided, the event will only be sent to the tab with that ID, otherwise the update is global.
-    /// This enforces synchronization between tabs.
+    /// Synchronization events. These events are sent to all tabs, or to a specific tab if an ID is provided.
+    /// 
+    /// They are usually used to synchronize multiple tabs. For example, if you insert a contact into the database,
+    /// the contact table tab should also be made aware of the change so it can update itself.
     #[serde(skip)]
-    pub tasks: Vec<(Option<Id>, types::SpawnedFuture)>,
+    pub events: Vec<(Option<Id>, types::Event)>,
     /// The FPS counter
     #[serde(skip)]
     fps_counter: FpsCounter,
@@ -397,7 +368,7 @@ impl Default for GuiConfig {
             cl_api,
             notifications: Default::default(),
             notification_read: Default::default(),
-            tasks: Default::default(),
+            events: Default::default(),
             fps_counter: Default::default(),
             add_tab_idx: Default::default(),
             distance_unit: types::DistanceUnit::Miles,

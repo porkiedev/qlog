@@ -5,7 +5,7 @@ use egui::{widgets, Align, CursorIcon, Id, Layout, RichText, Ui, Widget, WidgetT
 use log::{debug, error, trace};
 use strum::IntoEnumIterator;
 use anyhow::Result;
-use crate::modules::gui::{add_task_to_queue, frequency_formatter, frequency_parser, generate_random_id, power_formatter, power_parser, Tab};
+use crate::modules::gui::{frequency_formatter, frequency_parser, generate_random_id, power_formatter, power_parser, Tab};
 use crate::{types, GuiConfig, RT};
 use crate::database;
 
@@ -42,6 +42,12 @@ pub struct ContactTableTab {
     /// The task that is currently running to query the database
     #[serde(skip)]
     query_task: Option<(usize, Promise<Result<Vec<types::Contact>>>)>,
+    /// The task that is currently running to update a row in the database
+    #[serde(skip)]
+    update_task: Option<Promise<Result<types::Contact>>>,
+    /// The task that is currently running to delete a row in the database
+    #[serde(skip)]
+    delete_task: Option<Promise<Result<types::Contact>>>,
     /// A flag to indicate if we should query the database again.
     /// This is used instead of a queue so we only query the database once at a time, but we can still ensure we have the latest data.
     #[serde(skip)]
@@ -62,46 +68,32 @@ impl Tab for ContactTableTab {
     }
 
     fn process_event(&mut self, config: &mut GuiConfig, event: &types::Event) {
-
-        match event {
-            // A new contact was added to the database, so update the table
-            types::Event::AddedContact(_contact) => {
-                add_task_to_queue(
-                    &mut config.tasks,
-                    config.db_api.get_contacts(0, None, self.sort_column, Some(self.sort_dir)),
-                    Some(self.id)
-                );
-            },
-            types::Event::GotContacts(contacts) => {
-                self.contacts.clone_from(contacts);
-            },
-            // A contact in the database was updated, so update the table
-            types::Event::UpdatedContact(_contact) => {
-                add_task_to_queue(
-                    &mut config.tasks,
-                    config.db_api.get_contacts(0, None, self.sort_column, Some(self.sort_dir)),
-                    Some(self.id)
-                );
-            }
-            // A contact was deleted from the database, so remove that contact from the table (if it exists)
-            types::Event::DeletedContact(contact) => {
-                self.contacts.retain(|c| c.id != contact.id);
-            },
-            // Multiple contacts were deleted from the database, so remove all of them (if they exist)
-            types::Event::DeletedContacts(contacts) => {
-                for contact in contacts {
-                    self.contacts.retain(|c| c.id != contact.id);
-                }
-            }
-            _ => {}
-        }
-
+        // Refresh the contacts table if the event is a refresh contacts event
+        if let types::Event::RefreshContacts = event {
+            self.should_query = true;
+        };
     }
 
     fn ui(&mut self, config: &mut GuiConfig, ui: &mut Ui) {
         use egui_extras::Column;
         
-        // If we finished query the database, process the response
+        // Process any pending delete task
+        if let Some(contact) = self.delete_task.take_if(|t| t.ready().is_some()) {
+            let contact = contact.block_and_take();
+
+            // Since we deleted the contact, we should query the database again
+            self.should_query = true;
+        }
+
+        // Process any pending update task
+        if let Some(contact) = self.update_task.take_if(|t| t.ready().is_some()) {
+            let contact = contact.block_and_take();
+
+            // Since we updated the contact, we should query the database again
+            self.should_query = true;
+        }
+
+        // If we finished querying the database, process the response
         if let Some((offset, promise)) = self.query_task.take_if(|(_, t)| t.ready().is_some()) {
             // Take the query result
             match promise.block_and_take() {
@@ -196,6 +188,8 @@ impl Tab for ContactTableTab {
 
         }).body(|body| {
 
+            let mut should_update_row = None;
+
             // Create a new row for each contact
             body.rows(20.0, total_rows, |mut row| {
 
@@ -247,11 +241,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            add_task_to_queue(
-                                &mut config.tasks,
-                                config.db_api.update_contact(contact.clone()),
-                                None
-                            );
+                            should_update_row = Some(contact.clone());
                         };
 
                         // Focuses the textedit when a column is being edited
@@ -291,11 +281,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            add_task_to_queue(
-                                &mut config.tasks,
-                                config.db_api.update_contact(contact.clone()),
-                                None
-                            );
+                            should_update_row = Some(contact.clone());
                         };
 
                         // Focuses the widget when a column is being edited
@@ -354,11 +340,7 @@ impl Tab for ContactTableTab {
                                     self.editing_column = None;
 
                                     // Update the contact
-                                    add_task_to_queue(
-                                        &mut config.tasks,
-                                        config.db_api.update_contact(contact.clone()),
-                                        None
-                                    );
+                                    should_update_row = Some(contact.clone());
                                 };
                             }
 
@@ -370,11 +352,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            add_task_to_queue(
-                                &mut config.tasks,
-                                config.db_api.update_contact(contact.clone()),
-                                None
-                            );
+                            should_update_row = Some(contact.clone());
                         };
                     }
                     // This column isn't being edited, show a label
@@ -411,11 +389,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            add_task_to_queue(
-                                &mut config.tasks,
-                                config.db_api.update_contact(contact.clone()),
-                                None
-                            );
+                            should_update_row = Some(contact.clone());
                         };
 
                         // Focuses the textedit when a column is being edited
@@ -458,11 +432,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            add_task_to_queue(
-                                &mut config.tasks,
-                                config.db_api.update_contact(contact.clone()),
-                                None
-                            );
+                            should_update_row = Some(contact.clone());
                         };
 
                         // Focuses the textedit when a column is being edited
@@ -505,11 +475,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            add_task_to_queue(
-                                &mut config.tasks,
-                                config.db_api.update_contact(contact.clone()),
-                                None
-                            );
+                            should_update_row = Some(contact.clone());
                         };
 
                         // Focuses the dragvalue when the column is being edited
@@ -552,11 +518,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            add_task_to_queue(
-                                &mut config.tasks,
-                                config.db_api.update_contact(contact.clone()),
-                                None
-                            );
+                            should_update_row = Some(contact.clone());
                         };
 
                         // Focuses the dragvalue when the column is being edited
@@ -598,11 +560,7 @@ impl Tab for ContactTableTab {
                                 contact.date = d;
 
                                 // Update the contact
-                                add_task_to_queue(
-                                    &mut config.tasks,
-                                    config.db_api.update_contact(contact.clone()),
-                                    None
-                                );
+                                should_update_row = Some(contact.clone());
                             }
 
                             // Stop editing the column
@@ -651,11 +609,7 @@ impl Tab for ContactTableTab {
                                 contact.time = t;
 
                                 // Update the contact
-                                add_task_to_queue(
-                                    &mut config.tasks,
-                                    config.db_api.update_contact(contact.clone()),
-                                    None
-                                );
+                                should_update_row = Some(contact.clone());
                             }
 
                             // Stop editing the column
@@ -705,11 +659,7 @@ impl Tab for ContactTableTab {
                             self.editing_column = None;
 
                             // Update the contact
-                            add_task_to_queue(
-                                &mut config.tasks,
-                                config.db_api.update_contact(contact.clone()),
-                                None
-                            );
+                            should_update_row = Some(contact.clone());
                         };
 
                         // Focuses the textedit when a column is being edited
@@ -743,11 +693,7 @@ impl Tab for ContactTableTab {
                     if ui.button("Lookup callsign").on_hover_text("You must have a callsign lookup tab open to see the result").clicked() {
 
                         // Lookup the contact
-                        add_task_to_queue(
-                            &mut config.tasks,
-                            config.cl_api.lookup_callsign(&contact.callsign),
-                            None
-                        );
+                        config.events.push((None, types::Event::LookupCallsign(contact.callsign.clone())));
 
                         // Close the menu after the button was clicked
                         ui.close_menu();
@@ -755,23 +701,23 @@ impl Tab for ContactTableTab {
                     }
 
                     // A button to delete the contact
-                    if ui.button("Delete contact").clicked() {
-
+                    let response = ui.add_enabled(self.delete_task.is_none(), widgets::Button::new("Delete contact"));
+                    if response.clicked() {
                         // Delete the contact
-                        add_task_to_queue(
-                            &mut config.tasks,
-                            config.db_api.delete_contact(contact.id.as_ref().unwrap().id.clone()),
-                            None
-                        );
+                        self.delete_task = Some(config.db_api.delete_contact_promise(contact.id.as_ref().unwrap().id.clone()));
 
                         // Close the menu after the button was clicked
                         ui.close_menu();
-
                     }
 
                 });
 
             });
+
+            // Update the contact if the user modified a column
+            if let Some(contact) = should_update_row {
+                self.update_task = Some(config.db_api.update_contact_promise(contact));
+            }
 
         });
 
@@ -781,14 +727,14 @@ impl Tab for ContactTableTab {
         if self.should_query && self.query_task.is_none() {
             let _eg = RT.enter();
             // Get the number of visible rows
-            let n_rows = last_row_idx.saturating_sub(first_row_idx.unwrap()) + 1;
+            let n_visible_rows = last_row_idx.saturating_sub(first_row_idx.unwrap_or_default()) + 1;
 
             // Query the database
             self.query_task = Some((
-                first_row_idx.unwrap(),
+                first_row_idx.unwrap_or_default(),
                 config.db_api.get_contacts_promise(
-                first_row_idx.unwrap(),
-                Some(n_rows),
+                first_row_idx.unwrap_or_default(),
+                Some(n_visible_rows),
                 self.sort_column,
                 Some(self.sort_dir)
             )));
@@ -817,6 +763,8 @@ impl Default for ContactTableTab {
             last_row_idx: Default::default(),
             offset: Default::default(),
             query_task: Default::default(),
+            update_task: Default::default(),
+            delete_task: Default::default(),
             should_query: true
         }
     }

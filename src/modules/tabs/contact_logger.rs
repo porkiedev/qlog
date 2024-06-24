@@ -2,15 +2,17 @@
 // Contains the code for the contact logger tab
 //
 
+use anyhow::Result;
 use chrono::{NaiveDate, NaiveTime, Utc};
-use log::warn;
+use log::{error, warn};
+use poll_promise::Promise;
 use serde::{Deserialize, Serialize};
 use egui::{widgets, Id, Ui, Vec2, Widget, WidgetText};
 use strum::IntoEnumIterator;
-use crate::{modules::{gui::{add_task_to_queue, frequency_formatter, frequency_parser, generate_random_id, power_formatter, power_parser}, types}, GuiConfig, Tab};
+use crate::{modules::{gui::{frequency_formatter, frequency_parser, generate_random_id, power_formatter, power_parser}, types}, GuiConfig, Tab};
 
 /// The contact logger tab
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct ContactLoggerTab {
     /// The egui ID
@@ -28,7 +30,10 @@ pub struct ContactLoggerTab {
     /// The end date of the contact as a string
     end_date_str: String,
     /// The end time of the contact as a string
-    end_time_str: String
+    end_time_str: String,
+    /// The task that is currently running to insert the contact into the database
+    #[serde(skip)]
+    task: Option<Promise<Result<types::Contact>>>
 }
 impl ContactLoggerTab {
     /// Updates the start date and time of the contact to 'now'
@@ -70,6 +75,16 @@ impl Tab for ContactLoggerTab {
     }
     
     fn ui(&mut self, config: &mut GuiConfig, ui: &mut Ui) {
+
+        // Process any pending tasks
+        if let Some(task) = self.task.take_if(|t| t.ready().is_some()) {
+            // If the contact was added successfully, send a refresh contacts event, otherwise print the error
+            match task.block_and_take() {
+                Ok(_contact) => config.events.push((None, types::Event::RefreshContacts)),
+                Err(err) => error!("Failed to insert contact: {err}")
+            }
+        }
+
         // The horizontal spacing between widgets
         let spacing = ui.style().spacing.item_spacing.x;
         // The available width in the tab
@@ -346,20 +361,17 @@ impl Tab for ContactLoggerTab {
 
         // The submit button
         ui.vertical_centered_justified(|ui| {
-            if ui.button("Submit").clicked() {
+            let response = ui.add_enabled(self.task.is_none(), widgets::Button::new("Submit"));
+            if response.clicked() {
 
                 // Calculate the duration of the contact using the start and end date/time and store it in the contact
                 let elapsed = self.end_date.and_time(self.end_time).signed_duration_since(self.input.date.and_time(self.input.time)).num_seconds();
                 self.input.duration = elapsed as u64;
 
                 // Insert the contact into the database
-                add_task_to_queue(
-                    &mut config.tasks,
-                    config.db_api.insert_contact(self.input.clone()),
-                    None
-                );
+                self.task = Some(config.db_api.insert_contact_promise(self.input.clone()));
 
-            };
+            }
         });
     }
     
@@ -374,7 +386,8 @@ impl Default for ContactLoggerTab {
             end_date: Default::default(),
             end_time: Default::default(),
             end_date_str: Default::default(),
-            end_time_str: Default::default()
+            end_time_str: Default::default(),
+            task: Default::default()
         };
 
         // Update the date and time to 'now' when this tab is first created
@@ -382,5 +395,19 @@ impl Default for ContactLoggerTab {
         s.update_end_date_time();
 
         s
+    }
+}
+impl std::fmt::Debug for ContactLoggerTab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContactLoggerTab")
+        .field("id", &self.id)
+        .field("input", &self.input)
+        .field("start_date_str", &self.start_date_str)
+        .field("start_time_str", &self.start_time_str)
+        .field("end_date", &self.end_date)
+        .field("end_time", &self.end_time)
+        .field("end_date_str", &self.end_date_str)
+        .field("end_time_str", &self.end_time_str)
+        .finish()
     }
 }

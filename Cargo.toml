@@ -18,7 +18,7 @@ tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "time", "sy
 poll-promise = { version = "0.3", features = ["tokio"] }
 
 # data
-surrealdb = { version = "1.4", features = ["kv-rocksdb"] }
+surrealdb = { version = "1.5.1", features = ["kv-rocksdb"] }
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 geo = "0.28"
