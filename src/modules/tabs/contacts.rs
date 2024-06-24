@@ -724,6 +724,7 @@ impl Tab for ContactTableTab {
         // Should we query the database? This is set to true if the user has scrolled or resized the table
         self.should_query |= self.last_row_idx != last_row_idx;
 
+        // If we should query the database and we aren't already querying it, do so
         if self.should_query && self.query_task.is_none() {
             let _eg = RT.enter();
             // Get the number of visible rows

@@ -366,12 +366,19 @@ impl Tab for ContactLoggerTab {
 
                 // Calculate the duration of the contact using the start and end date/time and store it in the contact
                 let elapsed = self.end_date.and_time(self.end_time).signed_duration_since(self.input.date.and_time(self.input.time)).num_seconds();
+                // Ensure the duration is positive, showing an error if it is negative
+                if elapsed.is_negative() {
+                    config.notification_read = false;
+                    config.notifications.push(types::Notification::Error("The end time must be after the start time".to_string()));
+                    return;
+                }
+                // Update the duration of the contact
                 self.input.duration = elapsed as u64;
 
                 // Insert the contact into the database
                 self.task = Some(config.db_api.insert_contact_promise(self.input.clone()));
 
-            }
+            };
         });
     }
     
