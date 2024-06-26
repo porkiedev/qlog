@@ -16,11 +16,13 @@ use thiserror::Error;
 use anyhow::{Context, Result};
 
 
+/// The folder that the database is stored in
 const DB_FOLDER: &str = "db";
 /// The namespace of the database
-const DB_NAMESPACE: &str = "primary";
-/// The name for the contacts database
-const DB_CONTACTS: &str = "contacts";
+const DB_NAMESPACE: &str = "qlog";
+/// The name for the primary database
+const DB_NAME: &str = "primary";
+
 /// The name for the metadata table
 const TABLE_METADATA: &str = "metadata";
 /// The name for the table that contains all of the logged radio contacts
@@ -72,6 +74,11 @@ pub struct DatabaseInterface {
     contacts_metadata_changed: Arc<AtomicBool>
 }
 impl DatabaseInterface {
+    /// The timeout for database initialization. If the database initialization takes longer than this, it will be considered a failure.
+    const INIT_TIMEOUT: Duration = Duration::from_secs(10);
+    /// The timeout for database queries. If a query takes longer than this, it will be considered a failure.
+    const QUERY_TIMEOUT: Duration = Duration::from_secs(5);
+
     /// Connects to a database
     /// 
     /// Credentials can optionally be provided as `(username, password)`. This is used to log into remote authenticated databases.
@@ -99,7 +106,10 @@ impl DatabaseInterface {
         });
 
         // Connect to the database
-        let db = RT.block_on(Self::connect_to_db(endpoint, credentials))?;
+        let db = Self::connect_to_db(endpoint, credentials)?;
+
+        // Initialize the database
+        Self::init_database(&db)?;
 
         // Get the metadata for the contacts table
         let contacts_table_metadata = Self::init_contacts_table_metadata(&db)?;
@@ -114,49 +124,98 @@ impl DatabaseInterface {
     /// Tries to connect to the database at `endpoint`, optionally using the provided `credentials`
     /// 
     /// If this fails, the returned result contains a string that describes the issue
-    async fn connect_to_db(endpoint: String, credentials: Option<(&str, &str)>) -> Result<Surreal<Any>> {
-        
-        debug!("Connecting to database ('{endpoint}')");
-
-        // Connect to the database
-        let db = surrealdb::engine::any::connect(&endpoint).await
-        .map_err(DatabaseError::ConnectionFailure)?;
-
-        debug!("Switching namespace to '{DB_NAMESPACE}' and database to '{DB_CONTACTS}'");
-
-        // Use the default namespace and database
-        db.use_ns(DB_NAMESPACE).use_db(DB_CONTACTS).await
-        .map_err(|error| DatabaseError::NamespaceChangeFailure { ns: DB_NAMESPACE.into(), db: DB_CONTACTS.into(), error })?;
-
-        info!("Connected to database");
-
-        // If credentials were provided, use them to log into the database
-        if let Some((username, password)) = credentials {
-            debug!("Authenticating with database");
-
-            db.signin(Root {
-                username,
-                password
-            })
-            .await
-            .map_err(DatabaseError::AuthenticationFailure)?;
-        };
-
-        Ok(db)
-
-    }
-
-    /// Switches to the `contacts` database
-    fn switch_contacts(&self) {
+    fn connect_to_db(endpoint: String, credentials: Option<(&str, &str)>) -> Result<Surreal<Any>> {
         RT.block_on(async {
-            self.db.use_db(DB_CONTACTS).await.expect("Failed to switch to the contacts database");
-            debug!("Database context set to {DB_CONTACTS}");
+
+            debug!("Connecting to database ('{endpoint}')");
+
+            // Connect to the database
+            let db = surrealdb::engine::any::connect(&endpoint).await
+            .map_err(Error::ConnectionFailure)?;
+
+            debug!("Switching namespace to '{DB_NAMESPACE}' and database to '{DB_NAME}'");
+
+            // Use the default namespace and database
+            db.use_ns(DB_NAMESPACE).use_db(DB_NAME).await
+            .map_err(|error| Error::NamespaceChangeFailure { ns: DB_NAMESPACE.into(), db: DB_NAME.into(), error })?;
+
+            info!("Connected to database");
+
+            // If credentials were provided, use them to log into the database
+            if let Some((username, password)) = credentials {
+                debug!("Authenticating with database");
+
+                db.signin(Root {
+                    username,
+                    password
+                })
+                .await
+                .map_err(Error::AuthenticationFailure)?;
+            };
+
+            Ok(db)
+
         })
     }
 
-    /// Returns the contact table metadata record if it already exists, otherwise returns an empty record.
+    /// Initializes the database
+    /// 
+    /// This function should be called when the database is first opened.
+    /// It is used to create the necessary indices, tables, etc.
+    fn init_database(db: &Surreal<Any>) -> Result<()> {
+        use statements::{DefineStatement, DefineIndexStatement};
+
+        // Create the initialization statements
+        let init_statements = sql::Query(sql::Statements(vec![
+            // Create the contact->callsign index
+            sql::Statement::Define(DefineStatement::Index(DefineIndexStatement {
+                name: sql::Ident("contact_callsign_index".into()),
+                what: sql::Ident(TABLE_CONTACT.into()),
+                cols: sql::Idioms(vec![
+                    ContactTableColumn::Callsign.as_idiom()
+                ]),
+                index: sql::Index::Idx,
+                comment: Some(sql::Strand("Contact Table Callsign Index".into()))
+            })),
+            // Create the contact->date index
+            sql::Statement::Define(DefineStatement::Index(DefineIndexStatement {
+                name: sql::Ident("contact_date_index".into()),
+                what: sql::Ident(TABLE_CONTACT.into()),
+                cols: sql::Idioms(vec![
+                    ContactTableColumn::Date.as_idiom()
+                ]),
+                index: sql::Index::Idx,
+                comment: Some(sql::Strand("Contact Table Date Index".into()))
+            })),
+            // Create the contact->time index
+            sql::Statement::Define(DefineStatement::Index(DefineIndexStatement {
+                name: sql::Ident("contact_time_index".into()),
+                what: sql::Ident(TABLE_CONTACT.into()),
+                cols: sql::Idioms(vec![
+                    ContactTableColumn::Time.as_idiom()
+                ]),
+                index: sql::Index::Idx,
+                comment: Some(sql::Strand("Contact Table Time Index".into()))
+            }))
+        ]));
+
+        // Execute the query in a blocking manner
+        RT.block_on(async {
+
+            // Execute the query
+            let response: Option<Value> = execute_query_single(db.query(init_statements), Self::INIT_TIMEOUT).await
+                .map_err(Error::Initialization)?;
+
+            debug!("Initialized the database");
+
+            Ok(())
+
+        })
+    }
+
+    /// Returns the contact table metadata record, creating it if it doesn't exist.
     fn init_contacts_table_metadata(db: &Surreal<Any>) -> Result<ContactsTableMetadata> {
-        RT.block_on(async move {
+        RT.block_on(async {
 
             // Select the contact metadata record
             let stmt = statements::SelectStatement {
@@ -166,7 +225,7 @@ impl DatabaseInterface {
             };
 
             // Execute the query
-            let response = db.query(stmt).await?.take::<Option<ContactsTableMetadata>>(0)?;
+            let response = execute_query_single::<ContactsTableMetadata>(db.query(stmt), Self::QUERY_TIMEOUT).await?;
 
             // Return the metadata if it already exists, otherwise return an empty metadata record
             Ok(response.unwrap_or_default())
@@ -198,10 +257,10 @@ impl DatabaseInterface {
             ]));
 
             // Execute the database query with a 1 second timeout
-            let response: Option<types::Contact> = execute_query_single(db.query(query), Duration::from_secs(1)).await?;
+            let response: Option<types::Contact> = execute_query_single(db.query(query), Self::QUERY_TIMEOUT).await?;
 
             // Get the contact and ensure the database response wasn't empty
-            let contact = response.ok_or(DatabaseError::EmptyResponse)?;
+            let contact = response.ok_or(Error::EmptyResponse)?;
             
             // Mark the metadata as changed
             contacts_metadata_changed.store(true, SeqCst);
@@ -232,10 +291,10 @@ impl DatabaseInterface {
             };
 
             // Execute the query
-            let response: Option<types::Contact> = execute_query_single(db.query(stmt), Duration::from_secs(1)).await?;
+            let response: Option<types::Contact> = execute_query_single(db.query(stmt), Self::QUERY_TIMEOUT).await?;
             
             // Get the updated contact and ensure the database response wasn't empty
-            let contact = response.ok_or(DatabaseError::EmptyResponse)?;
+            let contact = response.ok_or(Error::EmptyResponse)?;
 
             // Return the updated contact
             Ok(contact)
@@ -268,10 +327,10 @@ impl DatabaseInterface {
             ]));
 
             // Execute the query
-            let response: Option<types::Contact> = execute_query_single(db.query(query), Duration::from_secs(1)).await?;
+            let response: Option<types::Contact> = execute_query_single(db.query(query), Self::QUERY_TIMEOUT).await?;
 
             // Get the deleted contact and ensure the database response wasn't empty
-            let contact = response.ok_or(DatabaseError::DoesNotExist)?;
+            let contact = response.ok_or(Error::DoesNotExist)?;
 
             // Mark the metadata as changed
             contacts_metadata_changed.store(true, SeqCst);
@@ -321,7 +380,7 @@ impl DatabaseInterface {
             ]));
 
             // Execute the query
-            let response = execute_query(db.query(query), Duration::from_secs(1)).await?;
+            let response = execute_query(db.query(query), Self::QUERY_TIMEOUT).await?;
 
             // Mark the metadata as changed
             contacts_metadata_changed.store(true, SeqCst);
@@ -360,11 +419,11 @@ impl DatabaseInterface {
                 });
 
             }
-            // The user didn't specify a column to sort by, so use default sorting scheme
+            // The user didn't specify a column to sort by, so use default sorting scheme (Date, Time, and Callsign in descending order)
             else {
-                orders.push(CALLSIGN_SORT.clone());
                 orders.push(DATE_SORT.clone());
                 orders.push(TIME_SORT.clone());
+                orders.push(CALLSIGN_SORT.clone());
             }
 
             // Create the sql statement
@@ -379,7 +438,7 @@ impl DatabaseInterface {
             };
 
             // Execute the query
-            let response = execute_query(db.query(stmt), Duration::from_secs(1)).await?;
+            let response = execute_query(db.query(stmt), Self::QUERY_TIMEOUT).await?;
 
             // Return the got contacts event
             Ok(response)
@@ -406,21 +465,18 @@ impl DatabaseInterface {
 // This mainly exists to reduce code reuse.
 lazy_static! {
     /// The default callsign column sort order
-    static ref CALLSIGN_SORT: surrealdb::sql::Order = surrealdb::sql::Order {
-        order: vec!["callsign".into()].into(),
-        direction: true,
+    static ref CALLSIGN_SORT: sql::Order = sql::Order {
+        order: sql::idiom("callsign").unwrap(),
         ..Default::default()
     };
     /// The default date column sort order
-    static ref DATE_SORT: surrealdb::sql::Order = surrealdb::sql::Order {
-        order: vec!["date".into()].into(),
-        direction: true,
+    static ref DATE_SORT: sql::Order = sql::Order {
+        order: sql::idiom("date").unwrap(),
         ..Default::default()
     };
     /// The default time column sort order
-    static ref TIME_SORT: surrealdb::sql::Order = surrealdb::sql::Order {
-        order: vec!["time".into()].into(),
-        direction: true,
+    static ref TIME_SORT: sql::Order = sql::Order {
+        order: sql::idiom("time").unwrap(),
         ..Default::default()
     };
 }
@@ -443,9 +499,9 @@ where
 
     // Execute the query with the provided timeout 
     let mut response = tokio::time::timeout(timeout, fut).await
-        .map_err(|_e| DatabaseError::Timeout)?
-        .map_err(DatabaseError::QueryFailed)?
-        .take::<Vec<T>>(0).map_err(DatabaseError::QueryFailed)?;
+        .map_err(|_e| Error::Timeout)?
+        .map_err(Error::QueryFailed)?
+        .take::<Vec<T>>(0).map_err(Error::QueryFailed)?;
 
     // Return the db response
     Ok(response)
@@ -469,9 +525,9 @@ where
 
     // Execute the query with the provided timeout 
     let mut response = tokio::time::timeout(timeout, fut).await
-        .map_err(|_e| DatabaseError::Timeout)?
-        .map_err(DatabaseError::QueryFailed)?
-        .take::<Option<T>>(0).map_err(DatabaseError::QueryFailed)?;
+        .map_err(|_e| Error::Timeout)?
+        .map_err(Error::QueryFailed)?
+        .take::<Option<T>>(0).map_err(Error::QueryFailed)?;
 
     // Return the db response
     Ok(response)
@@ -554,7 +610,7 @@ pub struct ContactsTableMetadata {
 
 /// Errors regarding the database module
 #[derive(Debug, Error)]
-pub enum DatabaseError {
+pub enum Error {
     #[error("Failed to connect to the database: {0}")]
     ConnectionFailure(surrealdb::Error),
     #[error("Failed to set namespace to {ns} and db to {db}: {error}")]
@@ -574,6 +630,8 @@ pub enum DatabaseError {
     #[error("The query executed successfully but the response was empty for unknown reasons")]
     EmptyResponse,
     #[error("Contact doesn't exist")]
-    DoesNotExist
+    DoesNotExist,
+    #[error("Failed to initialize the database: {0}")]
+    Initialization(anyhow::Error)
 }
 
