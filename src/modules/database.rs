@@ -506,8 +506,6 @@ pub enum ContactTableColumn {
     RxPwr,
     Date,
     Time,
-    // TODO: This column is hidden during iteration (meaning it's not visible on the GUI table), but it should be, so format this!
-    #[strum(disabled)]
     Duration,
     Note
 }

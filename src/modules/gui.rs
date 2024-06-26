@@ -258,6 +258,43 @@ pub fn frequency_parser(input: &str) -> Option<f64> {
     Some(result)
 }
 
+pub fn seconds_formatter(seconds: u64) -> String {
+    match seconds {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m {}s", s / 60, s % 60),
+        _ => format!("{}h {}m", seconds / 3600, (seconds % 3600) / 60)
+    }
+}
+
+/// Parses an input string into a u64 in seconds. If there are multiple components, they should be separated by spaces.
+/// 
+/// Example: `1h 2m 3s`` -> 3723
+pub fn duration_parser(input: &str) -> Option<u64> {
+    // Convert the input to lowercase
+    let input = input.to_lowercase();
+    // Initialize the duration to 0
+    let mut duration_secs = 0_u64;
+
+    // Split the input into time chunks, separated by spaces
+    input.split_whitespace().for_each(|s| {
+        // Parse the number
+        let num = s.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse::<u64>().unwrap_or(0);
+        // Get the last character of the string
+        let last_char = s.chars().last().unwrap_or(' ');
+
+        // Add the corresponding number of seconds to the duration
+        if s.contains('h') {
+            duration_secs += num * 3600;
+        } else if s.contains("min") || last_char == 'm' {
+            duration_secs += num * 60;
+        } else if s.contains("sec") || last_char == 's' {
+            duration_secs += num;
+        }
+    });
+
+    Some(duration_secs)
+}
+
 /// Generates a random [egui::Id]
 /// 
 /// This is typically used to differentiate between different tabs

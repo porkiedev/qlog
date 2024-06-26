@@ -5,7 +5,7 @@ use egui::{widgets, Align, CursorIcon, Id, Layout, RichText, Ui, Widget, WidgetT
 use log::{debug, error, trace};
 use strum::IntoEnumIterator;
 use anyhow::Result;
-use crate::modules::gui::{frequency_formatter, frequency_parser, generate_random_id, power_formatter, power_parser, Tab};
+use crate::modules::gui::{self, frequency_formatter, frequency_parser, generate_random_id, power_formatter, power_parser, Tab};
 use crate::{types, GuiConfig, RT};
 use crate::database;
 
@@ -19,7 +19,8 @@ pub struct ContactTableTab {
     /// The contacts that are shown in the contact table
     #[serde(skip)]
     contacts: Vec<types::Contact>,
-    /// The index of the first row in the contacts vec
+    /// The index of the first row in the contacts vec. This is critical for good performance.
+    /// We only want to query the database for the contacts that are visible in the table, so we use this offset to keep track of where we are.
     #[serde(skip)]
     contacts_offset: usize,
     /// The current column to sort the contacts by
@@ -35,10 +36,11 @@ pub struct ContactTableTab {
     /// The time string used when editing a time column on a contact
     #[serde(skip)]
     time_str: String,
+    /// The duration string used when editing a duration column on a contact
+    #[serde(skip)]
+    duration_str: String,
     /// The index of the last visible row when the database was last queried
     last_row_idx: usize,
-    // TODO: Document this
-    offset: usize,
     /// The task that is currently running to query the database
     #[serde(skip)]
     query_task: Option<(usize, Promise<Result<Vec<types::Contact>>>)>,
@@ -126,6 +128,7 @@ impl Tab for ContactTableTab {
         .columns(Column::initial(55.0).at_least(55.0), 2) // TX and RX Power
         .column(Column::initial(70.0).at_least(70.0)) // Date
         .column(Column::initial(50.0).at_least(50.0)) // Time
+        .column(Column::initial(50.0).at_least(50.0)) // Duration
         .columns(Column::remainder().at_least(50.0).clip(true), 1) // Note
         .cell_layout(Layout::top_down(Align::Center))
         .resizable(true)
@@ -640,6 +643,66 @@ impl Tab for ContactTableTab {
                     self.time_str = format!("{}", contact.time.format("%H:%M:%S"));
                 }
 
+                // ===== DURATION COLUMN ===== //
+                let (_rect, response) = row.col(|ui| {
+
+                    // This column is currently being edited, show a dragvalue widget
+                    if self.editing_column.is_some_and(|(idx, c)| idx == row_index && c.is_duration()) {
+
+                        // Show a textedit widget
+                        let w = widgets::TextEdit::singleline(&mut self.duration_str)
+                        .clip_text(true)
+                        .show(ui);
+
+                        // The textedit lost focus, implying that the user wants to save the changes
+                        if w.response.lost_focus() {
+
+                            // Try to parse the duration string into a duration in seconds type
+                            if let Some(d) = gui::duration_parser(&self.duration_str) {
+                                // Only update the duration if the user tried to enter a valid duration
+                                if !self.duration_str.is_empty() {
+
+                                    contact.duration = d;
+
+                                    // Update the contact
+                                    should_update_row = Some(contact.clone());
+
+                                }
+                            }
+
+                            // Stop editing the column
+                            self.editing_column = None;
+
+                        }
+
+                        // Focuses the textedit when the column is being edited
+                        w.response.request_focus();
+
+                    }
+                    // This column isn't being edited, show a label
+                    else {
+
+                        // Calculate the duration of the contact and format it as a pretty string
+                        let st = contact.date.and_time(contact.time);
+                        let et = st.checked_add_signed(chrono::TimeDelta::seconds(contact.duration as i64)).unwrap();
+                        let dur = gui::seconds_formatter(et.signed_duration_since(st).num_seconds() as u64);
+
+                        // Show a label widget
+                        widgets::Label::new(dur)
+                        .truncate(true)
+                        .selectable(false)
+                        .ui(ui);
+
+                    }
+
+                });
+                if response.double_clicked() {
+                    self.editing_column = Some((row_index, database::ContactTableColumn::Duration));
+
+                    // Clear the duration string
+                    self.duration_str.clear();
+                }
+
                 // ===== NOTE COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
@@ -761,8 +824,8 @@ impl Default for ContactTableTab {
             editing_column: Default::default(),
             date_str: Default::default(),
             time_str: Default::default(),
+            duration_str: Default::default(),
             last_row_idx: Default::default(),
-            offset: Default::default(),
             query_task: Default::default(),
             update_task: Default::default(),
             delete_task: Default::default(),
