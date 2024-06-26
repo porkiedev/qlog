@@ -78,7 +78,7 @@ impl Tab for ContactTableTab {
 
     fn ui(&mut self, config: &mut GuiConfig, ui: &mut Ui) {
         use egui_extras::Column;
-        
+
         // Process any pending delete task
         if let Some(contact) = self.delete_task.take_if(|t| t.ready().is_some()) {
             let contact = contact.block_and_take();
@@ -264,7 +264,7 @@ impl Tab for ContactTableTab {
                 if response.double_clicked() {
                     self.editing_column = Some((row_index, database::ContactTableColumn::Callsign));
                 }
-                
+
                 // ===== FREQUENCY COLUMN ===== //
                 let (_rect, response) = row.col(|ui| {
 
@@ -578,7 +578,7 @@ impl Tab for ContactTableTab {
                     else {
 
                         // Show a label widget
-                        widgets::Label::new(format!("{}", contact.date.format("%Y-%m-%d")))
+                        widgets::Label::new(contact.date.format("%Y-%m-%d").to_string())
                         .truncate(true)
                         .selectable(false)
                         .ui(ui);
@@ -591,7 +591,7 @@ impl Tab for ContactTableTab {
                     self.editing_column = Some((row_index, database::ContactTableColumn::Date));
 
                     // Initialize the date string with the current date of the contact
-                    self.date_str = format!("{}", contact.date.format("%Y-%m-%d"));
+                    self.date_str = contact.date.format("%Y-%m-%d").to_string();
                 }
 
                 // ===== TIME COLUMN ===== //
@@ -627,7 +627,7 @@ impl Tab for ContactTableTab {
                     else {
 
                         // Show a label widget
-                        widgets::Label::new(format!("{}", contact.time.format("%H:%M:%S")))
+                        widgets::Label::new(contact.time.format("%H:%M:%S").to_string())
                         .truncate(true)
                         .selectable(false)
                         .ui(ui);
@@ -640,7 +640,7 @@ impl Tab for ContactTableTab {
                     self.editing_column = Some((row_index, database::ContactTableColumn::Time));
 
                     // Initialize the time string with the current time of the contact
-                    self.time_str = format!("{}", contact.time.format("%H:%M:%S"));
+                    self.time_str = contact.time.format("%H:%M:%S").to_string();
                 }
 
                 // ===== DURATION COLUMN ===== //

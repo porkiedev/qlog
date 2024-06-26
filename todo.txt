@@ -48,5 +48,4 @@ Project ideals:
     1. Avoid breaking changes to the database schema
 
 TODOs:
-    1. Cache string conversations in the contacts table to improve performance
-    2. Always ensure the database has the neccessary table indexes and metadata at startup
+    1. Add a settings tab for the callsign lookup module. HamQTH required user credentials to work.
