@@ -48,4 +48,4 @@ Project ideals:
     1. Avoid breaking changes to the database schema
 
 TODOs:
-    1. Add a settings tab for the callsign lookup module. HamQTH required user credentials to work.
+    1. In the callsign lookup module, make the HamQTH session ID negotiation more asynchronous (i.e. don't block the gui thread)

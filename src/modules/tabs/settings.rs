@@ -42,7 +42,8 @@ impl Default for SettingsTab {
             id: gui::generate_random_id(),
             tabs: DockState::new(vec![
                 Box::new(PSKReporterSettingsTab),
-                Box::new(MapSettingsTab)
+                Box::new(MapSettingsTab),
+                Box::new(CallsignLookupSettingsTab)
             ])
         }
     }
@@ -222,6 +223,36 @@ impl SettingsTabTrait for MapSettingsTab {
 
                 }
             }
+
+        });
+
+    }
+}
+
+/// The callsign lookup settings tab
+#[derive(Debug)]
+struct CallsignLookupSettingsTab;
+impl SettingsTabTrait for CallsignLookupSettingsTab {
+    fn title(&mut self) -> egui::WidgetText {
+        "Callsign Lookup".into()
+    }
+
+    fn ui(&mut self, config: &mut crate::GuiConfig, ui: &mut egui::Ui) {
+        
+        // The HamQTH credentials
+        ui.group(|ui| {
+
+            // A label to describe the HamQTH credentials option
+            ui.label("HamQTH Credentials");
+            // The username textbox
+            egui::widgets::TextEdit::singleline(&mut config.callsign_lookup_config.username)
+            .hint_text("Username / Callsign")
+            .ui(ui);
+            // The password textbox
+            egui::widgets::TextEdit::singleline(&mut config.callsign_lookup_config.password)
+            .hint_text("Password")
+            .password(true)
+            .ui(ui);
 
         });
 

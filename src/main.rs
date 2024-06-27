@@ -13,7 +13,7 @@ use lazy_static::lazy_static;
 use log::{debug, info, trace};
 use serde::{Deserialize, Serialize};
 use modules::tabs;
-use modules::{callsign_lookup, database, gui::TabVariant, map, types};
+use modules::{database, gui::TabVariant, map, types};
 use strum::IntoEnumIterator;
 use modules::gui::Tab;
 
@@ -328,9 +328,9 @@ pub struct GuiConfig {
     /// The database API
     #[serde(skip)]
     db_api: database::DatabaseInterface,
-    /// The callsign lookup API
-    #[serde(skip)]
-    cl_api: callsign_lookup::CallsignLookup,
+    // /// The callsign lookup API
+    // #[serde(skip)]
+    // cl_api: callsign_lookup::CallsignLookup,
     /// Notifications. This could be status, warning, or error messages that need to be shown at the root level of the GUI
     #[serde(skip)]
     notifications: Vec<types::Notification>,
@@ -354,18 +354,20 @@ pub struct GuiConfig {
     /// The PSKReporter module config
     pskreporter_config: tabs::pskreporter::Config,
     /// The map widget config
-    map_config: map::Config
+    map_config: map::Config,
+    /// The callsign lookup config
+    callsign_lookup_config: tabs::callsign_lookup::Config
 }
 impl Default for GuiConfig {
     fn default() -> Self {
 
         let db = database::DatabaseInterface::new(None, None).unwrap();
         // let db = database::DatabaseInterface::new(runtime.handle().clone(), Some("ws://127.0.0.1:8000".into()), None).unwrap();
-        let cl_api = callsign_lookup::CallsignLookup::new(None);
+        // let cl_api = callsign_lookup::CallsignLookup::new(None);
 
         Self {
             db_api: db,
-            cl_api,
+            // cl_api,
             notifications: Default::default(),
             notification_read: Default::default(),
             events: Default::default(),
@@ -373,7 +375,8 @@ impl Default for GuiConfig {
             add_tab_idx: Default::default(),
             distance_unit: types::DistanceUnit::Miles,
             pskreporter_config: Default::default(),
-            map_config: Default::default()
+            map_config: Default::default(),
+            callsign_lookup_config: Default::default()
         }
     }
 }
