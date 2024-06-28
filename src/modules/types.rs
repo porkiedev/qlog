@@ -118,3 +118,23 @@ pub fn convert_range_u64(val: u64, r1: [u64; 2], r2: [u64; 2]) -> u64 {
         / (r1[1] - r1[0])
         + r2[0]
 }
+
+/// A module to serialize and deserialize `Arc<RwLock<T>>` types
+/// 
+/// NOTE: This performs blocking reads so you are responsible for ensuring that no deadlocks occur.
+pub mod arc_rwlock_serde {
+    use serde::{Deserialize, Serialize, Deserializer, Serializer};
+    use tokio::sync::RwLock;
+    use std::sync::Arc;
+
+    pub fn serialize<S, T>(val: &Arc<RwLock<T>>, s: S) -> Result<S::Ok, S::Error>
+    where S: Serializer, T: Serialize {
+        T::serialize(&*val.blocking_read(), s)
+    }
+    
+    pub fn deserialize<'de, D, T>(d: D) -> Result<Arc<RwLock<T>>, D::Error>
+    where D: Deserializer<'de>, T: Deserialize<'de> {
+        Ok(Arc::new(RwLock::new(T::deserialize(d)?)))
+    }
+
+}

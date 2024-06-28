@@ -2,8 +2,9 @@
 // Contains code belonging to the callsign lookup tab
 //
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 use anyhow::{Context, Result};
+use arrayvec::ArrayString;
 use chrono::NaiveDate;
 use geo::Coord;
 use log::{debug, error};
@@ -11,7 +12,9 @@ use poll_promise::Promise;
 use serde::{Deserialize, Serialize};
 use egui::{widgets, Align, Id, Layout, Ui, Widget, WidgetText};
 use thiserror::Error;
+use tokio::sync::{Mutex, RwLock};
 use crate::{modules::gui::{generate_random_id, Tab}, types, GuiConfig, RT};
+use crate::types::arc_rwlock_serde;
 
 
 /// The name of the program
@@ -51,7 +54,7 @@ impl CallsignLookupTab {
         }
     }
 
-    async fn query_hamqth(callsign: String, session_id: String) -> Result<CallsignInformation> {
+    async fn query_hamqth(callsign: String, session_id: HamQTHSessionID) -> Result<CallsignInformation> {
         let url = format!("https://hamqth.com/xml.php?id={session_id}&callsign={callsign}&prg={PROGRAM_NAME}");
 
         let response = reqwest::get(url).await.map_err(Error::FailedRequest)?
@@ -60,13 +63,64 @@ impl CallsignLookupTab {
         Ok(serde_xml_rs::from_str::<HamQTHResponseWrapper>(&response).context("Failed to query HamQTH API")?.inner.to_callsign_information())
     }
 
+    async fn get_hamqth_session_id(
+        username: String,
+        password: String,
+        session_id: Arc<RwLock<(u64, HamQTHSessionID)>>
+    ) -> Result<HamQTHSessionID> {
+
+        // Ensure we have credentials that we can use to query the HamQTH API
+        if username.is_empty() || password.is_empty() {
+            return Err(Error::HamQTHAuthFailure)?;
+        }
+
+        // Get the current epoch
+        let epoch_now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+
+        // If the cached ID is older than 45 minutes, renew the session id
+        if epoch_now - session_id.read().await.0 > 2_700 {
+
+            // Format the authentication URL
+            let url = format!("https://hamqth.com/xml.php?u={}&p={}", username, password);
+
+            // Query the HamQTH API a new session ID
+            let response = reqwest::get(url).await.map_err(Error::FailedRequest)?
+            .text().await.map_err(Error::FailedRequest)?;
+
+            // Try to parse the response into a session ID
+            let id = serde_xml_rs::from_str::<HamQTHAuthResponseWrapper>(&response)
+                .map_err(|_err| Error::HamQTHAuthFailure)?.inner.session_id;
+
+            // If the session ID is empty, return an error
+            if id.is_empty() {
+                return Err(Error::HamQTHAuthFailure)?;
+            }
+
+            // Update the session ID cache
+            *session_id.write().await = (
+                epoch_now,
+                ArrayString::from(&id).unwrap_or_default()
+            );
+
+        }
+
+        // Return a copy of the session ID
+        Ok(session_id.read().await.1)
+
+    }
+
     /// Queries the HamDB/HamQTH API about the provided callsign
     fn lookup_callsign_promise(&self, config: &mut Config) -> Promise<Result<CallsignInformation>> {
-        let callsign = self.callsign.to_string();
-        let hamqth_id = match RT.block_on(config.get_hamqth_session_id()) {
-            Ok(id) => Some(id.to_string()),
-            Err(err) => None
-        };
+
+        // Clone the callsign so we can move it into the task
+        let callsign = self.callsign.clone();
+
+        // Create a new task to get the HamQTH session ID
+        let hamqth_id = Self::get_hamqth_session_id(
+            config.username.clone(),
+            config.password.clone(),
+            config.hamqth_session_id.clone()
+        );
 
         let _eg = RT.enter();
         Promise::spawn_async(async move {
@@ -77,9 +131,8 @@ impl CallsignLookupTab {
                 Err(e) => e
             };
 
-            // If we have a HamQTH session ID, try querying the HamQTH API
-            if let Some(hamqth_id) = hamqth_id {
-                debug!("HamDB query failed, retrying with HamQTH:\n{hamdb_error:?}");
+            // Try to query the HamQTH API with the session ID
+            if let Ok(hamqth_id) = hamqth_id.await {
                 // Query the HamQTH API with the session ID
                 let callsign_info = Self::query_hamqth(callsign, hamqth_id).await?;
 
@@ -491,7 +544,6 @@ impl ToCallsignInformation for HamQTHResponse {
     }
 }
 
-
 /// A wrapper for the HamQTH Auth API response
 #[derive(Debug, Serialize, Deserialize)]
 struct HamQTHAuthResponseWrapper {
@@ -556,45 +608,17 @@ pub struct Config {
     pub username: String,
     /// The password to use with the HamQTH API
     pub password: String,
-    #[serde(skip)]
-    /// The HamQTH session ID
-    hamqth_session_id: (u64, String)
+    /// The HamQTH session ID wrapped in an `Arc<RwLock<(CreationTime, HamQTHSessionID)>>`
+    /// 
+    /// CreationTime is the time that the session ID was created, in seconds since the UNIX epoch.
+    /// This is used to determine if the session ID needs to be renewed.
+    /// 
+    /// Everything is wrapped in an `Arc<RwLock<_>>` so we can asynchronously update the session ID from the callsign lookup tab if needed.
+    // This is serialized so we don't keep refreshing session IDs every time we start the application.
+    // We only need to refresh them once every 45 minutes.
+    #[serde(with = "arc_rwlock_serde")]
+    hamqth_session_id: Arc<RwLock<(u64, HamQTHSessionID)>>
 }
-impl Config {
-    pub async fn get_hamqth_session_id(&mut self) -> Result<&str> {
 
-        // Ensure we have credentials
-        if self.username.is_empty() || self.password.is_empty() {
-            return Err(Error::HamQTHAuthFailure)?;
-        }
-
-        // Get the current epoch
-        let epoch_now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-
-        // If the cached ID is older than 45 minutes, renew the session id
-        if epoch_now - self.hamqth_session_id.0 > 2_700 {
-
-            // Format the authentication URL
-            let url = format!("https://hamqth.com/xml.php?u={}&p={}", self.username, self.password);
-
-            // Query the HamQTH API a new session ID
-            let response = reqwest::get(url).await.map_err(Error::FailedRequest)?
-            .text().await.map_err(Error::FailedRequest)?;
-
-            // Try to parse the response into a session ID
-            let id = serde_xml_rs::from_str::<HamQTHAuthResponseWrapper>(&response)
-                .map_err(|_err| Error::HamQTHAuthFailure)?.inner.session_id;
-
-            // If the session ID is empty, return an error
-            if id.is_empty() {
-                return Err(Error::HamQTHAuthFailure)?;
-            }
-
-            // Update the session ID cache
-            self.hamqth_session_id = (epoch_now, id);
-
-        }
-
-        Ok(&self.hamqth_session_id.1)
-    }
-}
+/// A type alias for the HamQTH session ID. The ID seems to always be 40 characters long so we use a stack allocated string here.
+pub type HamQTHSessionID = ArrayString<40>;

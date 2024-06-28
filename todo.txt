@@ -48,4 +48,3 @@ Project ideals:
     1. Avoid breaking changes to the database schema
 
 TODOs:
-    1. In the callsign lookup module, make the HamQTH session ID negotiation more asynchronous (i.e. don't block the gui thread)
