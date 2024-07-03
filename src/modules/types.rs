@@ -3,6 +3,8 @@
 //
 
 
+use std::ops::{Add, Div, Mul, Sub};
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use chrono::{NaiveDate, NaiveTime};
@@ -111,13 +113,17 @@ impl DistanceUnit {
 
 /// Converts a value from one range into a value in another range
 /// 
-/// Example: convert_range_u64(100, [0, 100], [0, 1000]) would return 100
-pub fn convert_range_u64(val: u64, r1: [u64; 2], r2: [u64; 2]) -> u64 {
+/// Example: `convert_range::<u32>(50, [0, 100], [0, 1000])` would return 500
+pub fn convert_range<T>(val: T, r1: [T; 2], r2: [T; 2]) -> T
+where
+    T: Copy + Sub<Output = T> + Mul<Output = T> + Div<Output = T> + Add<Output = T>,
+{
     (val - r1[0])
         * (r2[1] - r2[0])
         / (r1[1] - r1[0])
         + r2[0]
 }
+
 
 /// A module to serialize and deserialize `Arc<RwLock<T>>` types
 /// 

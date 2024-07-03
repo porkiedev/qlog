@@ -135,7 +135,6 @@ impl App for Gui {
                 .show_ui(ui, |ui| {
 
                     for (tab_idx, mut tab) in TabVariant::iter().enumerate() {
-                        // ui.selectable_value(&mut self.add_tab_idx, tab_idx, tab.to_string());
 
                         // Get the text for each tab variant
                         let text = match tab_idx {
@@ -144,7 +143,8 @@ impl App for Gui {
                             2 => "Contact Logger",
                             3 => "Callsign Lookup",
                             4 => "PSKReporter",
-                            5.. => "Settings",
+                            5 => "Settings",
+                            6.. => "Band Allocations",
                         };
 
                         if ui.selectable_label(false, text).clicked() {

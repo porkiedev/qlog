@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use thiserror::Error;
 use crate::{GuiConfig, RT};
-use super::gui::generate_random_id;
+use super::{gui::generate_random_id, types::convert_range};
 
 
 /// The maximum number of visible tiles. This is used to initialize hashmaps and vecs to improve frame time consistency (this is very overkill, lol)
@@ -1298,14 +1298,6 @@ impl MapMarkerTrait for DummyMapMarker {
 fn max_tiles(zoom: u32) -> u32 {
     let n_tiles = 4_u64.pow(zoom) as f64;
     n_tiles.sqrt() as u32
-}
-
-/// Converts a value from one range into a different value in another range
-fn convert_range(val: f64, r1: [f64; 2], r2: [f64; 2]) -> f64 {
-    (val - r1[0])
-        * (r2[1] - r2[0])
-        / (r1[1] - r1[0])
-        + r2[0]
 }
 
 /// The gudermannian function. Used to convert Y pixels into a Latitude value

@@ -10,6 +10,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 use crate::GuiConfig;
+use super::tabs::band_allocations::BandAllocationsTab;
 use super::tabs::callsign_lookup::CallsignLookupTab;
 use super::tabs::contact_logger::ContactLoggerTab;
 use super::tabs::contacts::ContactTableTab;
@@ -66,7 +67,9 @@ pub enum TabVariant {
     /// A tab for interfacing with PSKReporter
     PSKReporter(Box<PSKReporterTab>),
     /// A settings tab
-    Settings(Box<SettingsTab>)
+    Settings(Box<SettingsTab>),
+    /// A tab for viewing band allocations
+    BandAllocations(Box<BandAllocationsTab>)
 }
 impl Tab for TabVariant {
 
@@ -78,6 +81,7 @@ impl Tab for TabVariant {
             TabVariant::CallsignLookup(data) => data.id(),
             TabVariant::PSKReporter(data) => data.id(),
             TabVariant::Settings(data) => data.id(),
+            TabVariant::BandAllocations(data) => data.id(),
         }
     }
 
@@ -89,6 +93,7 @@ impl Tab for TabVariant {
             TabVariant::CallsignLookup(data) => data.scroll_bars(),
             TabVariant::PSKReporter(data) => data.scroll_bars(),
             TabVariant::Settings(data) => data.scroll_bars(),
+            TabVariant::BandAllocations(data) => data.scroll_bars(),
         }
     }
 
@@ -100,6 +105,7 @@ impl Tab for TabVariant {
             TabVariant::CallsignLookup(data) => data.title(),
             TabVariant::PSKReporter(data) => data.title(),
             TabVariant::Settings(data) => data.title(),
+            TabVariant::BandAllocations(data) => data.title(),
         }
     }
 
@@ -111,6 +117,7 @@ impl Tab for TabVariant {
             TabVariant::CallsignLookup(data) => data.init(config),
             TabVariant::PSKReporter(data) => data.init(config),
             TabVariant::Settings(data) => data.init(config),
+            TabVariant::BandAllocations(data) => data.init(config),
         }
     }
 
@@ -122,6 +129,7 @@ impl Tab for TabVariant {
             TabVariant::CallsignLookup(data) => data.process_event(config, event),
             TabVariant::PSKReporter(data) => data.process_event(config, event),
             TabVariant::Settings(data) => data.process_event(config, event),
+            TabVariant::BandAllocations(data) => data.process_event(config, event),
         }
     }
 
@@ -133,6 +141,7 @@ impl Tab for TabVariant {
             TabVariant::CallsignLookup(data) => data.ui(config, ui),
             TabVariant::PSKReporter(data) => data.ui(config, ui),
             TabVariant::Settings(data) => data.ui(config, ui),
+            TabVariant::BandAllocations(data) => data.ui(config, ui),
         }
     }
     
@@ -214,6 +223,18 @@ pub fn frequency_formatter(freq: f64, _range: RangeInclusive<usize>) -> String {
         f if f >= 1_000_000.0 => format!("{:.3} MHz", freq / 1_000_000.0),
         f if f >= 1_000.0 => format!("{:.3} KHz", freq / 1_000.0),
         _ => format!("{freq:.1} Hz")
+    }
+}
+
+/// Formats a f64 (in hz) into a string (e.g. 5000 = `5.000KHz`)
+/// 
+/// Used by egui drag value widgets
+pub fn frequency_formatter_no_unit(freq: f64) -> String {
+    match freq {
+        f if f >= 1_000_000_000.0 => format!("{:.3}", freq / 1_000_000_000.0),
+        f if f >= 1_000_000.0 => format!("{:.3}", freq / 1_000_000.0),
+        f if f >= 1_000.0 => format!("{:.3}", freq / 1_000.0),
+        _ => format!("{freq:.1}")
     }
 }
 

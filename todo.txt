@@ -1,12 +1,11 @@
 The source of stress (or fun)
 
 Wanted tabs:
-    1. Contact Logger
+    1. Contact Logger (Done)
         - Ideally add hamlib support so we can instantly load the mode and frequency from the radio when logging contacts
-    2. Contact Viewer
+    2. Contact Viewer (Done)
         - Should be an efficient table, capable of rendering millions of records
-        - Should be capable of searching/sorting by any field
-        - Should have a button to perform a callsign search
+        - Should be capable of searching/sorting by most fields
     3. MUF Map
     4. DX Cluster
     5. Solar information
@@ -19,8 +18,8 @@ Wanted tabs:
     9. Mode chart
         - Contains information about different modes, including digital modes
         - Contains commonly used frequencies for each mode
-    10. PSKReporter Map
-        - Does PSKReporter have an API?
+    10. PSKReporter Map (Done)
+    11. Callsign lookup (Done)
 
 Wanted features:
     1. Ability to log contacts to LOTW, QRZ, or just output a CSV file
@@ -48,3 +47,4 @@ Project ideals:
     1. Avoid breaking changes to the database schema
 
 TODOs:
+    1. Add a search feature to the contact viewer so you can search for a specific contact if necessary
